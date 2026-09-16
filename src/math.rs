@@ -116,6 +116,24 @@ pub fn clamp_f32(v: f32, lo: f32, hi: f32) -> f32 {
     v.clamp(lo, hi)
 }
 
+#[inline]
+pub fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+#[inline]
+pub fn linear_to_srgb(c: f32) -> f32 {
+    if c <= 0.0031308 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
+}
+
 impl Add for Vec3 {
     type Output = Vec3;
     #[inline]

@@ -104,7 +104,7 @@ fn frac0(v: f32) -> f32 {
 /// whether a voxel's block id should stop the ray (used later for transparent
 /// materials, leaves cutout, shadow attenuation, etc). `max_t` limits the ray
 /// length (use f32::INFINITY for primary rays).
-pub fn traverse(world: &World, ray: Ray, max_t: f32, accept: impl Fn(u8) -> bool) -> Option<HitInfo> {
+pub fn traverse(world: &World, ray: Ray, max_t: f32, accept: impl Fn(u8, Face, (f32, f32)) -> bool) -> Option<HitInfo> {
     let (bmin, bmax) = world.aabb();
     let (t_enter, t_exit) = intersect_aabb(ray, bmin, bmax)?;
     if t_exit < 0.0 || t_enter > max_t {
@@ -166,20 +166,21 @@ pub fn traverse(world: &World, ray: Ray, max_t: f32, accept: impl Fn(u8) -> bool
         vy = voxel[1];
         vz = voxel[2];
         let block = world.get(vx, vy, vz);
-        if accept(block) {
+        if block != 0 {
             let point = ray.at(entry_t.max(0.0));
-            let normal = entry_face.normal();
             let local = Vec3::new(frac0(point.x), frac0(point.y), frac0(point.z));
             let uv = face_uv(entry_face, local);
-            return Some(HitInfo {
-                t: entry_t,
-                point,
-                normal,
-                face: entry_face,
-                uv,
-                block,
-                voxel: (vx, vy, vz),
-            });
+            if accept(block, entry_face, uv) {
+                return Some(HitInfo {
+                    t: entry_t,
+                    point,
+                    normal: entry_face.normal(),
+                    face: entry_face,
+                    uv,
+                    block,
+                    voxel: (vx, vy, vz),
+                });
+            }
         }
 
         // Step to the next voxel: advance along the axis with the smallest t_max.

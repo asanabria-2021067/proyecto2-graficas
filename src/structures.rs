@@ -11,7 +11,7 @@ use crate::islands::Island;
 use crate::material::block;
 use crate::math::Vec3;
 use crate::noise::Pcg32;
-use crate::terrain::{generate_island, Heightmap, IslandParams};
+use crate::terrain::{generate_island, generate_rugged_island, Heightmap, IslandParams};
 use crate::world::World;
 
 // ---------- helpers genericos ----------
@@ -335,6 +335,105 @@ fn build_path_lights(world: &mut World, hm: &Heightmap, points: &[(i32, i32)]) {
     }
 }
 
+// ---------- Nether ----------
+
+/// Lago/rio de lava con cascada por el borde, igual que `build_lake_and_waterfall`
+/// pero con lava (que ademas ilumina como luz puntual, ver `lights.rs`) y
+/// lecho de netherrack en vez de arena.
+fn build_lava_lake_and_falls(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, radius: i32, lava_level: i32, outward_angle_deg: f32) {
+    for dz in -radius..=radius {
+        for dx in -radius..=radius {
+            let dist2 = dx * dx + dz * dz;
+            if dist2 > radius * radius {
+                continue;
+            }
+            let x = cx + dx;
+            let z = cz + dz;
+            let Some(top) = hm.top_at(x, z) else { continue };
+            if top > lava_level {
+                world.fill_box((x, lava_level + 1, z), (x, top, z), block::AIR);
+            }
+            let dist_norm = (dist2 as f32).sqrt() / radius as f32;
+            let bowl_depth = ((1.0 - dist_norm) * 2.0) as i32;
+            let bed_y = (lava_level - 1 - bowl_depth).min(top);
+            world.set(x, bed_y, z, block::NETHERRACK);
+            world.fill_box((x, bed_y + 1, z), (x, lava_level, z), block::LAVA);
+        }
+    }
+
+    let angle = outward_angle_deg.to_radians();
+    let (dx, dz) = (angle.cos(), angle.sin());
+    let (edge_x, edge_z, _) = find_edge(hm, cx, cz, angle, radius as f32 + 80.0);
+    let edge_dist = (((edge_x - cx) * (edge_x - cx) + (edge_z - cz) * (edge_z - cz)) as f32).sqrt();
+    let (perp_x, perp_z) = (-dz, dx);
+
+    let mut t = radius as f32 - 1.0;
+    while t < edge_dist {
+        let cx_f = cx as f32 + dx * t;
+        let cz_f = cz as f32 + dz * t;
+        for w in -1..=1 {
+            let x = (cx_f + perp_x * w as f32).round() as i32;
+            let z = (cz_f + perp_z * w as f32).round() as i32;
+            let Some(top) = hm.top_at(x, z) else { continue };
+            if top > lava_level {
+                world.fill_box((x, lava_level, z), (x, top, z), block::AIR);
+            }
+            world.set(x, lava_level, z, block::LAVA);
+        }
+        t += 1.0;
+    }
+
+    for w in -1..=1 {
+        let x = edge_x + (perp_x * w as f32).round() as i32;
+        let z = edge_z + (perp_z * w as f32).round() as i32;
+        for depth in 0..22 {
+            let y = lava_level - depth;
+            if y < 1 {
+                break;
+            }
+            world.set(x, y, z, block::LAVA);
+        }
+    }
+}
+
+/// Portal del Nether: marco de obsidiana de 4 de ancho x 5 de alto con
+/// material `portal` rellenando el hueco interior (2x3).
+fn build_nether_portal(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
+    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
+    flatten_area(world, cx - 3, cz - 3, cx + 3, cz + 3, base_y, block::NETHERRACK);
+    let y0 = base_y + 1;
+    world.fill_box((cx - 2, y0, cz), (cx + 1, y0 + 4, cz), block::OBSIDIAN);
+    world.fill_box((cx - 1, y0 + 1, cz), (cx, y0 + 3, cz), block::PORTAL);
+}
+
+/// Ruinas chicas de una fortaleza del Nether: cuatro pilares de distinta
+/// altura, dos dinteles a modo de arco, y una pasarela central.
+fn build_nether_ruins(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
+    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
+    flatten_area(world, cx - 6, cz - 6, cx + 6, cz + 6, base_y, block::NETHERRACK);
+
+    let pillar_h = [5, 7, 6, 8];
+    let offsets = [(-5, -4), (5, -4), (-5, 4), (5, 4)];
+    for (i, &(dx, dz)) in offsets.iter().enumerate() {
+        place_pillar(world, cx + dx, cz + dz, base_y + 1, base_y + pillar_h[i], block::NETHER_BRICKS);
+    }
+    for &dz in &[-4, 4] {
+        world.fill_box((cx - 5, base_y + 5, cz + dz), (cx + 5, base_y + 5, cz + dz), block::NETHER_BRICKS);
+    }
+    build_walkway(world, cx, cz - 4, base_y + 1, cx, cz + 4, base_y + 1, 2, block::NETHER_BRICKS, block::NETHER_BRICKS);
+}
+
+/// Cuelga glowstone del borde real de la isla (calculado con `find_edge`,
+/// asi funciona con cualquier semilla), unos bloques por debajo del filo.
+fn hang_glowstone_edge(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, radius: f32, count: u32, seed: u32) {
+    let mut rng = Pcg32::new(seed as u64 ^ 0x9E17_44A0, 0x51ED);
+    for _ in 0..count {
+        let angle = rng.range_f32(0.0, std::f32::consts::PI * 2.0);
+        let (ex, ez, ey) = find_edge(hm, cx, cz, angle, radius + 40.0);
+        world.set(ex, ey - 2, ez, block::GLOWSTONE);
+    }
+}
+
 /// Construye un puente entre dos islas COMO SU PROPIA MINI-GRILLA (`Island`
 /// nueva, empujada a `islands`): encuentra el borde real de cada isla en
 /// direccion a la otra (`find_edge`, funciona con cualquier semilla), nivela
@@ -342,7 +441,7 @@ fn build_path_lights(world: &mut World, hm: &Heightmap, points: &[(i32, i32)]) {
 /// tiende una pasarela dentro de la grilla nueva que solo cubre el hueco
 /// entre ambas (mas un margen), no toda la distancia entre sus centros.
 #[allow(clippy::too_many_arguments)]
-fn build_bridge(islands: &mut Vec<Island>, idx_a: usize, hm_a: &Heightmap, pa: &IslandParams, idx_b: usize, hm_b: &Heightmap, pb: &IslandParams, min_world_y: i32) {
+fn build_bridge(islands: &mut Vec<Island>, idx_a: usize, hm_a: &Heightmap, pa: &IslandParams, idx_b: usize, hm_b: &Heightmap, pb: &IslandParams, min_world_y: i32, deck_id: u8, post_id: u8) {
     let a_center_world = islands[idx_a].to_world_point(Vec3::new(pa.center_x as f32, pa.top_y as f32, pa.center_z as f32));
     let b_center_world = islands[idx_b].to_world_point(Vec3::new(pb.center_x as f32, pb.top_y as f32, pb.center_z as f32));
     let angle_deg = (b_center_world.z - a_center_world.z).atan2(b_center_world.x - a_center_world.x).to_degrees();
@@ -357,9 +456,9 @@ fn build_bridge(islands: &mut Vec<Island>, idx_a: usize, hm_a: &Heightmap, pa: &
     // Nivela un parche en cada isla (en SUS coordenadas locales) para que la
     // transicion al puente no tenga un escalon.
     let local_y_a = bridge_y_world - islands[idx_a].offset.1;
-    flatten_area(&mut islands[idx_a].world, edge_a.0 - 1, edge_a.1 - 1, edge_a.0 + 1, edge_a.1 + 1, local_y_a, block::OAK_PLANKS);
+    flatten_area(&mut islands[idx_a].world, edge_a.0 - 1, edge_a.1 - 1, edge_a.0 + 1, edge_a.1 + 1, local_y_a, deck_id);
     let local_y_b = bridge_y_world - islands[idx_b].offset.1;
-    flatten_area(&mut islands[idx_b].world, edge_b.0 - 1, edge_b.1 - 1, edge_b.0 + 1, edge_b.1 + 1, local_y_b, block::OAK_PLANKS);
+    flatten_area(&mut islands[idx_b].world, edge_b.0 - 1, edge_b.1 - 1, edge_b.0 + 1, edge_b.1 + 1, local_y_b, deck_id);
 
     // Grilla propia del puente: solo el hueco entre las dos islas, mas margen.
     let margin = 4;
@@ -374,7 +473,7 @@ fn build_bridge(islands: &mut Vec<Island>, idx_a: usize, hm_a: &Heightmap, pa: &
     let local_a = bridge_island.to_local_point(edge_a_world);
     let local_b = bridge_island.to_local_point(edge_b_world);
     let by = bridge_y_world - min_y;
-    build_walkway(&mut bridge_island.world, local_a.x.round() as i32, local_a.z.round() as i32, by, local_b.x.round() as i32, local_b.z.round() as i32, by, 2, block::OAK_PLANKS, block::OAK_LOG);
+    build_walkway(&mut bridge_island.world, local_a.x.round() as i32, local_a.z.round() as i32, by, local_b.x.round() as i32, local_b.z.round() as i32, by, 2, deck_id, post_id);
 
     islands.push(bridge_island);
 }
@@ -438,7 +537,7 @@ pub fn build_lighthouse_scene(seed: u32) -> (Vec<Island>, Vec3, f32) {
     let sat_a = spawn_island(&mut islands, seed.wrapping_add(101), params_a, offset_a);
     clear_trees_near(&mut islands[sat_a.index].world, sat_a.params.center_x, sat_a.params.center_z, 4);
     build_statue(&mut islands[sat_a.index].world, &sat_a.heightmap, sat_a.params.center_x, sat_a.params.center_z);
-    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_a.index, &sat_a.heightmap, &sat_a.params, water_level_world + 2);
+    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_a.index, &sat_a.heightmap, &sat_a.params, water_level_world + 2, block::OAK_PLANKS, block::OAK_LOG);
 
     // Isla satelite B: jardin con fuente.
     let b_offset_xz = (main_center_world.x + (70f32.to_radians().cos() * (r + sat_gap + sat_r)), main_center_world.z + (70f32.to_radians().sin() * (r + sat_gap + sat_r)));
@@ -447,7 +546,39 @@ pub fn build_lighthouse_scene(seed: u32) -> (Vec<Island>, Vec3, f32) {
     let sat_b = spawn_island(&mut islands, seed.wrapping_add(202), params_b, offset_b);
     clear_trees_near(&mut islands[sat_b.index].world, sat_b.params.center_x, sat_b.params.center_z, 7);
     build_garden(&mut islands[sat_b.index].world, &sat_b.heightmap, sat_b.params.center_x, sat_b.params.center_z, seed);
-    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_b.index, &sat_b.heightmap, &sat_b.params, water_level_world + 2);
+    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_b.index, &sat_b.heightmap, &sat_b.params, water_level_world + 2, block::OAK_PLANKS, block::OAK_LOG);
+
+    // Isla del Nether: a un costado y mas abajo que la principal (offset.y
+    // negativo), perfil de ruido "ridged" (generate_rugged_island) en vez
+    // del fBm suave de las demas. Union por un puente de nether_bricks.
+    let nether_r = 30.0f32;
+    let nether_gap = 16.0;
+    let nether_angle = 320.0f32;
+    let nether_xz = (
+        main_center_world.x + nether_angle.to_radians().cos() * (r + nether_gap + nether_r),
+        main_center_world.z + nether_angle.to_radians().sin() * (r + nether_gap + nether_r),
+    );
+    let params_n = IslandParams::new(nether_r, 0);
+    let offset_n = ((nether_xz.0 as i32) - params_n.center_x, -24, (nether_xz.1 as i32) - params_n.center_z);
+    let (nether_world, nether_hm) = generate_rugged_island(seed.wrapping_add(303), &params_n);
+    let nether_idx = islands.len();
+    islands.push(Island::new(nether_world, offset_n));
+    let nether = BuiltIsland { index: nether_idx, heightmap: nether_hm, params: params_n };
+
+    let (ncx, ncz, nr) = (nether.params.center_x, nether.params.center_z, nether.params.radius);
+    let lava_level = nether.params.top_y - 6;
+    let (plx, plz) = polar(ncx, ncz, 200.0, nr * 0.3);
+    build_nether_portal(&mut islands[nether.index].world, &nether.heightmap, plx, plz);
+
+    let (llx, llz) = polar(ncx, ncz, 20.0, nr * 0.3);
+    build_lava_lake_and_falls(&mut islands[nether.index].world, &nether.heightmap, llx, llz, (nr * 0.28) as i32, lava_level, 20.0);
+
+    let (rux, ruz) = polar(ncx, ncz, 110.0, nr * 0.4);
+    build_nether_ruins(&mut islands[nether.index].world, &nether.heightmap, rux, ruz);
+
+    hang_glowstone_edge(&mut islands[nether.index].world, &nether.heightmap, ncx, ncz, nr, 8, seed.wrapping_add(303));
+
+    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, nether.index, &nether.heightmap, &nether.params, offset_n.1 + 4, block::NETHER_BRICKS, block::OBSIDIAN);
 
     (islands, main_center_world, r)
 }

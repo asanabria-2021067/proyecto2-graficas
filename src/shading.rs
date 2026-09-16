@@ -181,7 +181,11 @@ pub fn shade_surface(hit: &HitInfo, normal: Vec3, view_dir: Vec3, islands: &[Isl
         color += (diffuse + Vec3::splat(spec)).mul_v(light.color).mul_v(trans) * (light.intensity * atten);
     }
 
-    color + mat.emission
+    let emission = match &tex.emission_map {
+        Some(map) => map.sample_rgb(hit.uv.0, hit.uv.1),
+        None => mat.emission,
+    };
+    color + emission
 }
 
 /// Beer-Lambert attenuation for light travelling `distance` through a medium

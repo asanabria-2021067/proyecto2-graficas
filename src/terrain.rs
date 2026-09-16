@@ -132,6 +132,56 @@ pub fn generate_island(seed: u32, p: &IslandParams) -> (World, Heightmap) {
     (world, heightmap)
 }
 
+/// Como `generate_island`, pero con un perfil de ruido "ridged" (se pliega el
+/// fBm sobre si mismo) para que en vez de colinas suaves salgan picos
+/// filosos y grietas entre ellos -- pensado para la isla del Nether. Capas
+/// solo de netherrack (sin pasto/tierra/agua), con parches de magma al azar
+/// en la superficie marcando las grietas que brillan. No planta arboles.
+pub fn generate_rugged_island(seed: u32, p: &IslandParams) -> (World, Heightmap) {
+    let (nx, ny, nz) = p.grid_dims();
+    let mut world = World::new(nx, ny, nz);
+    let perlin = Perlin::new(seed);
+    let mut top = vec![i32::MIN; (world.nx * world.nz) as usize];
+    let mut on_island = vec![false; (world.nx * world.nz) as usize];
+
+    for z in 0..world.nz {
+        for x in 0..world.nx {
+            let dx = (x - p.center_x) as f32;
+            let dz = (z - p.center_z) as f32;
+            let dist = (dx * dx + dz * dz).sqrt() / p.radius;
+
+            let edge_noise = perlin.fbm2(x as f32 * 0.06 + 700.0, z as f32 * 0.06, 4, 2.0, 0.55);
+            let dist_deformed = dist + edge_noise * 0.4; // orilla mas quebrada que la isla principal
+            if dist_deformed >= 1.0 {
+                continue;
+            }
+
+            let raw = perlin.fbm2(x as f32 * 0.09, z as f32 * 0.09, 5, 2.0, 0.5);
+            let ridged = (1.0 - raw.abs() * 2.0).clamp(-1.0, 1.0);
+            let surface_y = p.top_y + (ridged * 10.0) as i32;
+
+            let dist_norm = dist.clamp(0.0, 1.0);
+            let cone = p.max_depth * (1.0 - dist_norm).powf(1.3);
+            let jag = perlin.noise3(x as f32 * 0.12, z as f32 * 0.12, 11.7);
+            let bottom_y = (p.top_y as f32 - cone - (jag * 0.5 + 0.5) * 6.0).round() as i32;
+            let bottom_y = bottom_y.max(1);
+
+            let crack = perlin.noise3(x as f32 * 0.15, z as f32 * 0.15, 3.3) > 0.6;
+            let top_block = if crack { block::MAGMA } else { block::NETHERRACK };
+
+            world.fill_box((x, bottom_y, z), (x, (surface_y - 1).max(bottom_y), z), block::NETHERRACK);
+            world.set(x, surface_y, z, top_block);
+
+            let i = (z * world.nx + x) as usize;
+            top[i] = surface_y;
+            on_island[i] = true;
+        }
+    }
+
+    let heightmap = Heightmap { nx: world.nx, nz: world.nz, top, on_island };
+    (world, heightmap)
+}
+
 fn place_trees(world: &mut World, hm: &Heightmap, p: &IslandParams, seed: u32) {
     let mut rng = Pcg32::new(seed as u64 ^ 0xA11C_E000, 0x7EE);
     let mut placed: Vec<(i32, i32)> = Vec::new();

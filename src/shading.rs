@@ -22,8 +22,8 @@ pub struct Environment {
 
 pub fn day_environment() -> Environment {
     Environment {
-        sun: Sun { dir: Vec3::new(-0.8013, -0.2079, -0.5610), color: Vec3::new(1.0, 0.9, 0.75), intensity: 1.6 },
-        ambient: Vec3::new(0.22, 0.26, 0.32),
+        sun: Sun { dir: Vec3::new(-0.8013, -0.2079, -0.5610), color: Vec3::new(1.0, 0.9, 0.75), intensity: 1.7 },
+        ambient: Vec3::new(0.12, 0.15, 0.20),
     }
 }
 
@@ -77,6 +77,9 @@ pub fn perturb_normal(hit: &HitInfo, tex: &FaceTex, strength: f32, enabled: bool
 /// their transparent texels. Used for primary rays and shadow rays alike.
 #[inline]
 pub fn is_visible(materials: &MaterialTable, id: u8, face: Face, uv: (f32, f32)) -> bool {
+    if id == 0 {
+        return false; // el aire nunca bloquea un rayo
+    }
     match materials.get(id) {
         Some(mat) if mat.alpha_cutout => {
             let (_, a) = face_tex(mat, face).albedo.sample(uv.0, uv.1);

@@ -96,10 +96,13 @@ pub struct CameraFrame {
 }
 
 impl CameraFrame {
+    /// `(sub_x, sub_y)` is a sub-pixel offset in [-0.5, 0.5), used for
+    /// multisampling (supersampling a settled frame with several taps per
+    /// pixel instead of one ray through the pixel center).
     #[inline]
-    pub fn ray_for_pixel(&self, px: f32, py: f32) -> Ray {
-        let ndc_x = (px + 0.5) / self.width;
-        let ndc_y = (py + 0.5) / self.height;
+    pub fn ray_for_pixel(&self, px: f32, py: f32, sub_x: f32, sub_y: f32) -> Ray {
+        let ndc_x = (px + 0.5 + sub_x) / self.width;
+        let ndc_y = (py + 0.5 + sub_y) / self.height;
         let screen_x = (2.0 * ndc_x - 1.0) * self.aspect * self.tan_half_fov;
         let screen_y = (1.0 - 2.0 * ndc_y) * self.tan_half_fov;
 

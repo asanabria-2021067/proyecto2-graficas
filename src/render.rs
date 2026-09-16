@@ -7,6 +7,30 @@ use crate::math::{Ray, Vec3};
 
 pub const TILE: u32 = 16;
 
+/// 4-tap regular grid, used for media-quality settled-frame supersampling.
+pub const SAMPLES_2X2: [(f32, f32); 4] = [(-0.25, -0.25), (0.25, -0.25), (-0.25, 0.25), (0.25, 0.25)];
+
+/// 9-tap rotated-grid supersampling (RGSS-style): a regular 3x3 lattice
+/// rotated by atan(1/3) so samples don't line up on the pixel's horizontal/
+/// vertical axes, which reduces the "staircase" look plain grid supersampling
+/// leaves on near-axis-aligned edges. Used for alta-quality settled frames.
+pub fn rotated_grid_3x3() -> [(f32, f32); 9] {
+    let theta = (1.0f32 / 3.0).atan();
+    let (s, c) = theta.sin_cos();
+    let spacing = 1.0 / 3.0;
+    let mut out = [(0.0f32, 0.0f32); 9];
+    let mut i = 0;
+    for gy in -1..=1 {
+        for gx in -1..=1 {
+            let bx = gx as f32 * spacing;
+            let by = gy as f32 * spacing;
+            out[i] = (bx * c - by * s, bx * s + by * c);
+            i += 1;
+        }
+    }
+    out
+}
+
 pub fn default_thread_count() -> usize {
     thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
 }
@@ -42,8 +66,17 @@ fn build_tiles(width: u32, height: u32) -> Vec<Tile> {
 
 /// Renders one frame into `fb` using all available CPU cores, splitting work
 /// into small tiles pulled from a shared atomic counter so threads stay
-/// balanced across cheap and expensive regions of the image.
+/// balanced across cheap and expensive regions of the image. One ray per
+/// pixel, through the pixel center.
 pub fn render_frame(fb: &mut Framebuffer, cam: &Camera, tracer: &dyn Tracer, threads: usize) {
+    render_frame_ms(fb, cam, tracer, threads, &[(0.0, 0.0)]);
+}
+
+/// Same as `render_frame`, but traces `samples.len()` rays per pixel (each
+/// offset by a sub-pixel `(sx, sy)` tap) and averages them. Used for the
+/// settled-frame supersampling pass; `samples` of length 1 is exactly
+/// `render_frame`.
+pub fn render_frame_ms(fb: &mut Framebuffer, cam: &Camera, tracer: &dyn Tracer, threads: usize, samples: &[(f32, f32)]) {
     let width = fb.width;
     let height = fb.height;
     let frame = cam.frame(width, height);
@@ -56,6 +89,7 @@ pub fn render_frame(fb: &mut Framebuffer, cam: &Camera, tracer: &dyn Tracer, thr
     struct SendPtr(*mut u32);
     unsafe impl Sync for SendPtr {}
     let out = SendPtr(raw_ptr);
+    let inv_n = 1.0 / samples.len() as f32;
 
     thread::scope(|scope| {
         for _ in 0..threads.max(1) {
@@ -71,9 +105,12 @@ pub fn render_frame(fb: &mut Framebuffer, cam: &Camera, tracer: &dyn Tracer, thr
                 let tile = &tiles[idx];
                 for y in tile.y0..tile.y1 {
                     for x in tile.x0..tile.x1 {
-                        let ray = frame.ray_for_pixel(x as f32, y as f32);
-                        let color = tracer.trace(ray);
-                        let packed = linear_to_u32(color);
+                        let mut color = Vec3::zero();
+                        for &(sx, sy) in samples {
+                            let ray = frame.ray_for_pixel(x as f32, y as f32, sx, sy);
+                            color += tracer.trace(ray);
+                        }
+                        let packed = linear_to_u32(color * inv_n);
                         unsafe {
                             *out_ref.0.add((y * width + x) as usize) = packed;
                         }

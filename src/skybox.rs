@@ -82,11 +82,18 @@ fn generate_day_face(face: usize, perlin: &Perlin, sun_dir: Vec3) -> Texture {
             let v = (y as f32 + 0.5) / FACE_SIZE as f32;
             let dir = face_uv_to_dir(face, u, v);
 
-            let t = (dir.y * 0.5 + 0.5).clamp(0.0, 1.0);
-            let mut color = Vec3::new(0.75, 0.85, 0.97).lerp(Vec3::new(0.15, 0.35, 0.75), t);
+            // La camara orbital nunca mira hacia arriba de verdad (pitch
+            // clamped 5-85, siempre inclinada hacia el centro), asi que el
+            // cielo que se ve en pantalla rara vez pasa de dir.y ~0.5. Sesgar
+            // t con una potencia <1 hace que el azul saturado del cenit
+            // aparezca mucho antes, en vez de quedarse solo el gris palido
+            // del horizonte en casi todos los angulos utiles de camara.
+            let t = (dir.y * 0.5 + 0.5).clamp(0.0, 1.0).powf(0.45);
+            let mut color = Vec3::new(0.60, 0.72, 0.90).lerp(Vec3::new(0.05, 0.30, 0.75), t);
 
             let n = perlin.fbm2(dir.x * 6.0 + 100.0, dir.z * 6.0, 5, 2.0, 0.5) * 0.5 + 0.5;
-            let cloud = ((n - 0.42) / 0.3).clamp(0.0, 1.0) * dir.y.max(0.05).powf(0.3);
+            let cloud_t = ((n - 0.45) / 0.14).clamp(0.0, 1.0);
+            let cloud = cloud_t * cloud_t * (3.0 - 2.0 * cloud_t) * dir.y.max(0.05).powf(0.3);
             color = color.lerp(Vec3::new(0.99, 0.99, 1.0), cloud);
 
             let (core, glow) = disc_glow(dir, sun_pos, 0.9994, 400.0);

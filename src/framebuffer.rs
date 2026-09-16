@@ -34,6 +34,41 @@ impl Framebuffer {
         self.height = height;
         self.pixels = vec![0u32; (width * height) as usize];
     }
+
+    /// Nearest-neighbor upscale of `self` into `dst` (any size ratio), used
+    /// for the cheap low-res preview while the camera is being dragged.
+    pub fn upscale_into(&self, dst: &mut Framebuffer) {
+        for y in 0..dst.height {
+            let sy = (y * self.height / dst.height).min(self.height - 1);
+            for x in 0..dst.width {
+                let sx = (x * self.width / dst.width).min(self.width - 1);
+                dst.set(x, y, self.get(sx, sy));
+            }
+        }
+    }
+
+    /// Box-downsamples `self` (must be exactly `dst` at 2x width/height) into
+    /// `dst`: the optional 2x2 supersample pass on the settled frame.
+    pub fn downsample_2x2_into(&self, dst: &mut Framebuffer) {
+        debug_assert_eq!(self.width, dst.width * 2);
+        debug_assert_eq!(self.height, dst.height * 2);
+        for y in 0..dst.height {
+            for x in 0..dst.width {
+                let mut r = 0u32;
+                let mut g = 0u32;
+                let mut b = 0u32;
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let (rr, gg, bb) = u32_to_rgb(self.get(x * 2 + dx, y * 2 + dy));
+                        r += rr as u32;
+                        g += gg as u32;
+                        b += bb as u32;
+                    }
+                }
+                dst.set(x, y, ((r / 4) << 16) | ((g / 4) << 8) | (b / 4));
+            }
+        }
+    }
 }
 
 /// Linear color [0,1] -> gamma-corrected 0x00RRGGBB.

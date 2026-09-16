@@ -46,6 +46,7 @@ fn build_tiles(width: u32, height: u32) -> Vec<Tile> {
 pub fn render_frame(fb: &mut Framebuffer, cam: &Camera, tracer: &dyn Tracer, threads: usize) {
     let width = fb.width;
     let height = fb.height;
+    let frame = cam.frame(width, height);
     let tiles = build_tiles(width, height);
     let cursor = AtomicUsize::new(0);
     let pixels = &fb.pixels;
@@ -61,6 +62,7 @@ pub fn render_frame(fb: &mut Framebuffer, cam: &Camera, tracer: &dyn Tracer, thr
             let cursor = &cursor;
             let tiles = &tiles;
             let out_ref = &out;
+            let frame = &frame;
             scope.spawn(move || loop {
                 let idx = cursor.fetch_add(1, Ordering::Relaxed);
                 if idx >= tiles.len() {
@@ -69,7 +71,7 @@ pub fn render_frame(fb: &mut Framebuffer, cam: &Camera, tracer: &dyn Tracer, thr
                 let tile = &tiles[idx];
                 for y in tile.y0..tile.y1 {
                     for x in tile.x0..tile.x1 {
-                        let ray = cam.ray_for_pixel(x as f32, y as f32, width, height);
+                        let ray = frame.ray_for_pixel(x as f32, y as f32);
                         let color = tracer.trace(ray);
                         let packed = linear_to_u32(color);
                         unsafe {

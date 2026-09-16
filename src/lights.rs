@@ -2,6 +2,10 @@ use crate::material::MaterialTable;
 use crate::math::Vec3;
 use crate::world::World;
 
+/// Upper bound on how many lights `query_nearby` can be asked for at once
+/// (backs its allocation-free scratch arrays).
+const MAX_QUERY_LIGHTS: usize = 8;
+
 pub struct PointLight {
     pub pos: Vec3,
     pub color: Vec3,
@@ -36,19 +40,41 @@ impl LightGrid {
         )
     }
 
-    /// Returns up to `max_n` lights that can plausibly reach `point`, nearest first.
-    pub fn query_nearby(&self, point: Vec3, max_n: usize, out: &mut Vec<u16>) {
-        out.clear();
+    /// Fills `out` with up to `out.len()` lights that can plausibly reach
+    /// `point`, nearest first, and returns how many were written. Runs a
+    /// bounded insertion sort over the cell's lights instead of allocating a
+    /// scratch vector, so it costs nothing on the heap per ray.
+    pub fn query_nearby(&self, point: Vec3, out: &mut [u16]) -> usize {
+        let max_n = out.len();
+        let mut dist2 = [f32::INFINITY; MAX_QUERY_LIGHTS];
+        debug_assert!(max_n <= MAX_QUERY_LIGHTS);
+
         let (cx, cy, cz) = self.cell_of(point);
-        if let Some(idx) = self.cell_index(cx, cy, cz) {
-            out.extend_from_slice(&self.cells[idx]);
+        let Some(idx) = self.cell_index(cx, cy, cz) else { return 0 };
+
+        let mut count = 0usize;
+        for &light_idx in &self.cells[idx] {
+            let d = (self.lights[light_idx as usize].pos - point).length_squared();
+            let insert_at = if count < max_n {
+                let pos = count;
+                count += 1;
+                Some(pos)
+            } else if d < dist2[max_n - 1] {
+                Some(max_n - 1)
+            } else {
+                None
+            };
+            if let Some(mut pos) = insert_at {
+                while pos > 0 && dist2[pos - 1] > d {
+                    dist2[pos] = dist2[pos - 1];
+                    out[pos] = out[pos - 1];
+                    pos -= 1;
+                }
+                dist2[pos] = d;
+                out[pos] = light_idx;
+            }
         }
-        out.sort_by(|&a, &b| {
-            let da = (self.lights[a as usize].pos - point).length_squared();
-            let db = (self.lights[b as usize].pos - point).length_squared();
-            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-        });
-        out.truncate(max_n);
+        count
     }
 }
 

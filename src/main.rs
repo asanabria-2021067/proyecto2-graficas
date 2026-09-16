@@ -28,7 +28,7 @@ use islands::Island;
 use lights::{build_light_grid, LightGrid};
 use material::MaterialTable;
 use math::Vec3;
-use render::{default_thread_count, render_frame, render_frame_ms, rotated_grid_3x3, SAMPLES_2X2};
+use render::{default_thread_count, render_frame, rotated_grid_3x3, Progressive, SAMPLES_2X2};
 use scene::{max_depth_for_quality, Scene};
 use shading::{day_environment, night_environment, Environment};
 use skybox::Skybox;
@@ -117,6 +117,38 @@ fn run_bench_mode(args: &Args) {
     bench::run(&scene, args.width, args.height, wd.main_center, wd.main_radius * 2.0);
 }
 
+/// Mide el costo real del refinamiento progresivo pasada por pasada (parte
+/// 1, sesion 3): cuanto tarda la pasada 0 (1 muestra/pixel, todo el frame)
+/// contra las pasadas siguientes (solo los pixeles de alto contraste). Sin
+/// ventana -- para poder medirlo con `cargo run --release -- --bench-aa`.
+fn run_bench_aa_mode(args: &Args) {
+    let wd = build_world_data(args.seed);
+    let skybox = build_skybox(args.seed);
+    let scene = Scene {
+        islands: &wd.islands,
+        materials: &wd.materials,
+        lights: &wd.lights,
+        skybox: &skybox,
+        env: environment_for(args.night),
+        night: args.night,
+        max_depth: max_depth_for_quality(3),
+        normalmaps: !args.no_normalmaps,
+    };
+    let cam = build_camera(args, &wd);
+    let mut fb = Framebuffer::new(args.width, args.height);
+    let samples = settle_samples(3);
+    let total = samples.len();
+    let mut prog = Progressive::new(args.width, args.height, samples);
+    println!("--bench-aa: {}x{}, calidad alta ({total} pasadas)", args.width, args.height);
+    while !prog.is_done() {
+        let pass = prog.pass;
+        let t0 = std::time::Instant::now();
+        prog.step(&mut fb, &cam, &scene, default_thread_count());
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        println!("  pasada {pass}: {ms:.1} ms");
+    }
+}
+
 #[derive(PartialEq, Clone, Copy)]
 struct FrameState {
     yaw_bits: u32,
@@ -193,6 +225,12 @@ fn run_window_mode(args: &Args) {
 
     let mut last_state: Option<FrameState> = None;
     let mut was_moving = false;
+    // Refinamiento progresivo del pase quieto: None cuando la camara se
+    // mueve (se cancela cualquier refinamiento en curso) o cuando ya
+    // termino todas sus pasadas. Se reinicia desde cero cada vez que el
+    // estado cambia (camara, calidad, semilla, dia/noche, normal maps) o
+    // justo en el frame en que la camara se detiene.
+    let mut progressive: Option<Progressive> = None;
 
     while !rl.window_should_close() {
         let dt = rl.get_frame_time();
@@ -292,10 +330,22 @@ fn run_window_mode(args: &Args) {
             seed,
         };
         // Fuerza un repintado en el frame exacto en que la camara se detiene,
-        // para que corra el pase de resolucion completa aunque el estado
+        // para que arranque el refinamiento progresivo aunque el estado
         // (yaw/pitch/dist ya estables) no haya cambiado respecto al ultimo.
-        let dirty = last_state != Some(state) || (was_moving && !moving);
+        let just_stopped = was_moving && !moving;
         was_moving = moving;
+
+        if moving {
+            progressive = None;
+        } else if last_state != Some(state) || just_stopped {
+            // Estado nuevo (o recien se solto la camara): arranca el
+            // refinamiento progresivo desde cero -- pasada 0 (1 muestra por
+            // pixel) inmediata, luego una pasada mas por frame, solo en los
+            // pixeles de alto contraste, hasta completar la calidad elegida.
+            progressive = Some(Progressive::new(win_w, win_h, settle_samples(quality)));
+        }
+        let progressive_active = !moving && progressive.as_ref().is_some_and(|p| !p.is_done());
+        let dirty = last_state != Some(state) || just_stopped || progressive_active;
 
         if dirty {
             let scene = Scene {
@@ -310,11 +360,13 @@ fn run_window_mode(args: &Args) {
             };
             // Resolucion adaptativa: mientras la camara se mueve, renderiza a
             // una fraccion de la resolucion de ventana (segun calidad) y
-            // escala con nearest-neighbor; al soltar, un pase a resolucion
-            // completa de ventana, con supersampling segun calidad (1x/2x2/
-            // 3x3 rotado).
+            // escala con nearest-neighbor. Al soltar, el pase quieto es
+            // PROGRESIVO: una pasada por frame (no bloquea la ventana ni
+            // los controles), la primera a 1 muestra/pixel para algo nitido
+            // de inmediato, las siguientes solo en los pixeles de alto
+            // contraste (AA adaptativo) hasta completar la calidad elegida.
             let t0 = std::time::Instant::now();
-            let res_label = if moving {
+            let (res_label, pass_label) = if moving {
                 let scale = moving_scale(quality);
                 let lw = ((win_w as f32 * scale) as u32).max(1);
                 let lh = ((win_h as f32 * scale) as u32).max(1);
@@ -323,15 +375,19 @@ fn run_window_mode(args: &Args) {
                 }
                 render_frame(&mut fb_low, &cam, &scene, default_thread_count());
                 fb_low.upscale_into(&mut fb);
-                "BAJA-RES"
+                ("BAJA-RES", String::new())
             } else {
-                let samples = settle_samples(quality);
-                render_frame_ms(&mut fb, &cam, &scene, default_thread_count(), &samples);
-                match quality {
+                let prog = progressive.as_mut().expect("progressive existe cuando no se esta moviendo y quedo dirty");
+                let total = prog.total_passes();
+                prog.step(&mut fb, &cam, &scene, default_thread_count());
+                let label = match quality {
                     1 => "COMPLETA",
                     3 => "SSAA-3X3",
                     _ => "SSAA-2X2",
-                }
+                };
+                let pass = prog.pass.min(total);
+                let pass_label = if prog.is_done() { format!("PASE {pass}/{total} LISTO") } else { format!("PASE {pass}/{total}") };
+                (label, pass_label)
             };
             let last_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -350,6 +406,9 @@ fn run_window_mode(args: &Args) {
             fb.draw_text(4, 20, &format!("RES:{win_w}X{win_h}"), 0x00FFFFFF, 2);
             fb.draw_text(4, 36, &format!("SEED:{seed} {mode} Q:{quality_name}"), 0x00FFFFFF, 2);
             fb.draw_text(4, 52, &format!("NORMALMAPS:{nm} GEN:{gen_ms:.1}MS"), 0x00FFFFFF, 2);
+            if !pass_label.is_empty() {
+                fb.draw_text(4, 68, &pass_label, 0x00FFFFFF, 2);
+            }
 
             rgba.clear();
             for &p in &fb.pixels {
@@ -379,6 +438,10 @@ fn main() {
     }
     if args.bench {
         run_bench_mode(&args);
+        return;
+    }
+    if args.bench_aa {
+        run_bench_aa_mode(&args);
         return;
     }
     run_window_mode(&args);

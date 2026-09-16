@@ -92,13 +92,26 @@ pub fn is_visible(materials: &MaterialTable, id: u8, face: Face, uv: (f32, f32))
 
 /// Casts a shadow ray with the same DDA used for primary rays, but instead of
 /// stopping at the first hit it walks through transparent surfaces (water,
-/// glass) attenuating the light by their transparency and color; leaves use
-/// their alpha cutout directly via the traverse predicate. Fully opaque
-/// surfaces block the light outright.
+/// glass) attenuating the light; leaves use their alpha cutout directly via
+/// the traverse predicate. Fully opaque surfaces block the light outright.
+///
+/// Tracks `current_medium` exactly like `Scene::trace_recursive` does for
+/// primary rays, so a multi-voxel body of water (or any transparent medium
+/// thicker than one block) reads as ONE continuous volume: internal faces
+/// between same-material neighbours don't count as separate "hits". Without
+/// this, a lake bed under N voxels of water got the entrance tint
+/// (`albedo * transparency`) applied N times in a row -- for water's own
+/// bluish albedo (low in red) that cubes to near-zero red after just 3
+/// voxels, which is why the lake read as a flat dark hole instead of a lit
+/// blue-green surface. Now the entrance tint is applied once per distinct
+/// medium entered, and the real depth-dependent falloff comes from
+/// Beer-Lambert over the actual distance travelled inside, applied once on
+/// exit -- consistent with how the refracted view ray already works.
 fn shadow_transmittance(islands: &[Island], materials: &MaterialTable, origin: Vec3, dir: Vec3, max_dist: f32) -> Vec3 {
     let mut transmittance = Vec3::splat(1.0);
     let mut traveled = 0.0f32;
     let mut current = origin;
+    let mut current_medium: u8 = 0;
 
     for _ in 0..MAX_TRANSPARENT_STEPS {
         let remaining = max_dist - traveled;
@@ -106,8 +119,22 @@ fn shadow_transmittance(islands: &[Island], materials: &MaterialTable, origin: V
             break;
         }
         let ray = Ray::new(current, dir);
-        let hit = traverse_islands(islands, ray, remaining, |id, face, uv| is_visible(materials, id, face, uv));
+        let hit = traverse_islands(islands, ray, remaining, |id, face, uv| id != current_medium && (id == 0 || is_visible(materials, id, face, uv)));
         let Some(hit) = hit else { break };
+
+        if current_medium != 0 {
+            if let Some(mat) = materials.get(current_medium) {
+                transmittance = transmittance.mul_v(beer_lambert(mat.absorption, hit.t.max(0.0)));
+            }
+            current_medium = 0;
+        }
+
+        if hit.block == 0 {
+            traveled = hit.t + SHADOW_EPS;
+            current = hit.point + dir * SHADOW_EPS;
+            continue;
+        }
+
         let Some(mat) = materials.get(hit.block) else {
             return Vec3::zero();
         };
@@ -116,6 +143,7 @@ fn shadow_transmittance(islands: &[Island], materials: &MaterialTable, origin: V
         }
         let (albedo, _a) = face_tex(mat, hit.face).albedo.sample(hit.uv.0, hit.uv.1);
         transmittance = transmittance.mul_v(albedo * mat.transparency);
+        current_medium = hit.block;
         traveled = hit.t + SHADOW_EPS;
         current = hit.point + dir * SHADOW_EPS;
     }

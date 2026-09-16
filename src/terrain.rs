@@ -166,7 +166,10 @@ pub fn generate_rugged_island(seed: u32, p: &IslandParams) -> (World, Heightmap)
             let bottom_y = (p.top_y as f32 - cone - (jag * 0.5 + 0.5) * 6.0).round() as i32;
             let bottom_y = bottom_y.max(1);
 
-            let crack = perlin.noise3(x as f32 * 0.15, z as f32 * 0.15, 3.3) > 0.6;
+            // El magma se concentra hacia el borde (grietas que se ven
+            // "al filo" de la isla), casi no aparece cerca del centro.
+            let crack_threshold = 0.68 - dist_norm * 0.42;
+            let crack = perlin.noise3(x as f32 * 0.15, z as f32 * 0.15, 3.3) > crack_threshold;
             let top_block = if crack { block::MAGMA } else { block::NETHERRACK };
 
             world.fill_box((x, bottom_y, z), (x, (surface_y - 1).max(bottom_y), z), block::NETHERRACK);
@@ -206,7 +209,11 @@ pub fn generate_soft_island(seed: u32, p: &IslandParams) -> (World, Heightmap) {
             }
 
             let height_noise = perlin.fbm2(x as f32 * 0.04, z as f32 * 0.04, 3, 2.0, 0.5);
-            let surface_y = p.top_y + (height_noise * 2.5) as i32;
+            // Relieve en terrazas: la altura se redondea a escalones de 2
+            // bloques en vez de variar de a uno, para que se lea como
+            // terrazas suaves (tipico del End) en vez de una loma continua.
+            let raw_offset = height_noise * 3.5;
+            let surface_y = p.top_y + ((raw_offset / 2.0).round() as i32) * 2;
 
             let dist_norm = dist.clamp(0.0, 1.0);
             let cone = p.max_depth * (1.0 - dist_norm).powf(1.8); // achatada: cae mas de golpe cerca del borde

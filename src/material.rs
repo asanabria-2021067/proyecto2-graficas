@@ -32,7 +32,22 @@ pub mod block {
     pub const END_CRYSTAL: u8 = 22;
     pub const END_ROD: u8 = 23;
     pub const CHORUS: u8 = 24;
-    pub const COUNT: usize = 25;
+    pub const END_STONE_BRICKS: u8 = 25;
+    pub const CRIMSON_STEM: u8 = 26;
+    pub const WARPED_STEM: u8 = 27;
+    pub const NETHER_WART_BLOCK: u8 = 28;
+    pub const WARPED_WART_BLOCK: u8 = 29;
+    pub const SHROOMLIGHT: u8 = 30;
+    pub const CRIMSON_NYLIUM: u8 = 31;
+    pub const WARPED_NYLIUM: u8 = 32;
+    pub const BLACKSTONE: u8 = 33;
+    pub const FIRE: u8 = 34;
+    pub const SOUL_FIRE: u8 = 35;
+    pub const SOUL_SAND: u8 = 36;
+    pub const PURPUR_PILLAR: u8 = 37;
+    pub const CHORUS_PLANT: u8 = 38;
+    pub const MAGENTA_GLASS: u8 = 39;
+    pub const COUNT: usize = 40;
 }
 
 pub struct FaceTex {
@@ -191,8 +206,8 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     leaves.alpha_cutout = true;
     entries[block::LEAVES as usize] = Some(leaves);
 
-    let mut water = Material::uniform("water", seed, MatParams { specular_coef: 0.6, specular_exp: 90.0, transparency: 0.85, reflectivity: 0.15, ior: 1.33, emission: Vec3::zero() });
-    water.absorption = Vec3::new(0.22, 0.07, 0.04);
+    let mut water = Material::uniform("water", seed, MatParams { specular_coef: 0.6, specular_exp: 90.0, transparency: 0.85, reflectivity: 0.30, ior: 1.33, emission: Vec3::zero() });
+    water.absorption = Vec3::new(0.14, 0.045, 0.025);
     entries[block::WATER as usize] = Some(water);
 
     let glass = Material::uniform("glass", seed, MatParams { specular_coef: 0.6, specular_exp: 120.0, transparency: 0.92, reflectivity: 0.06, ior: 1.5, emission: Vec3::zero() });
@@ -273,6 +288,54 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     basalt.normal_strength = 0.5;
     entries[block::BASALT as usize] = Some(basalt);
 
+    // ---------- Nether: flora e isla compacta (parte 3, sesion 3) ----------
+
+    let mut crimson_stem = Material::uniform_bumped("crimson_stem", seed, MatParams { specular_coef: 0.05, specular_exp: 8.0, ..Default::default() });
+    crimson_stem.normal_strength = 0.8;
+    entries[block::CRIMSON_STEM as usize] = Some(crimson_stem);
+
+    let mut warped_stem = Material::uniform_bumped("warped_stem", seed, MatParams { specular_coef: 0.05, specular_exp: 8.0, ..Default::default() });
+    warped_stem.normal_strength = 0.8;
+    entries[block::WARPED_STEM as usize] = Some(warped_stem);
+
+    let mut nether_wart_block = Material::uniform_bumped("nether_wart_block", seed, MatParams { specular_coef: 0.02, specular_exp: 4.0, ..Default::default() });
+    nether_wart_block.normal_strength = 1.3;
+    entries[block::NETHER_WART_BLOCK as usize] = Some(nether_wart_block);
+
+    let mut warped_wart_block = Material::uniform_bumped("warped_wart_block", seed, MatParams { specular_coef: 0.02, specular_exp: 4.0, ..Default::default() });
+    warped_wart_block.normal_strength = 1.3;
+    entries[block::WARPED_WART_BLOCK as usize] = Some(warped_wart_block);
+
+    // Shroomlight: emisivo naranja calido, cuelga de la copa de los
+    // hongos gigantes y se registra sola como luz puntual.
+    let shroomlight = Material::uniform("shroomlight", seed, MatParams { specular_coef: 0.1, specular_exp: 10.0, emission: Vec3::new(1.0, 0.6, 0.25) * 2.2, ..Default::default() });
+    entries[block::SHROOMLIGHT as usize] = Some(shroomlight);
+
+    let mut crimson_nylium = Material::uniform("crimson_nylium", seed, MatParams { specular_coef: 0.04, specular_exp: 6.0, ..Default::default() });
+    crimson_nylium.bottom = FaceTex::new(load_or_generate("netherrack", seed));
+    entries[block::CRIMSON_NYLIUM as usize] = Some(crimson_nylium);
+
+    let mut warped_nylium = Material::uniform("warped_nylium", seed, MatParams { specular_coef: 0.04, specular_exp: 6.0, ..Default::default() });
+    warped_nylium.bottom = FaceTex::new(load_or_generate("netherrack", seed));
+    entries[block::WARPED_NYLIUM as usize] = Some(warped_nylium);
+
+    let mut blackstone = Material::uniform_bumped("blackstone", seed, MatParams { specular_coef: 0.15, specular_exp: 22.0, reflectivity: 0.04, ..Default::default() });
+    blackstone.normal_strength = 0.9;
+    entries[block::BLACKSTONE as usize] = Some(blackstone);
+
+    // Fuego y fuego de alma: alpha cutout (silueta de llama recortada en la
+    // textura, no geometria de cruz) y emisivos, sin sombra propia (igual
+    // que la lava/magma, la emision no pasa por el rayo de sombra).
+    let mut fire = Material::uniform("fire", seed, MatParams { emission: Vec3::new(1.0, 0.55, 0.15) * 2.0, ..Default::default() });
+    fire.alpha_cutout = true;
+    entries[block::FIRE as usize] = Some(fire);
+
+    let mut soul_fire = Material::uniform("soul_fire", seed, MatParams { emission: Vec3::new(0.3, 0.75, 1.0) * 2.0, ..Default::default() });
+    soul_fire.alpha_cutout = true;
+    entries[block::SOUL_FIRE as usize] = Some(soul_fire);
+
+    entries[block::SOUL_SAND as usize] = Some(Material::uniform("soul_sand", seed, MatParams { specular_coef: 0.02, specular_exp: 4.0, ..Default::default() }));
+
     // ---------- End ----------
 
     let mut end_stone = Material::uniform_bumped("end_stone", seed, MatParams { specular_coef: 0.06, specular_exp: 10.0, ..Default::default() });
@@ -282,6 +345,10 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     let mut purpur = Material::uniform_bumped("purpur", seed, MatParams { specular_coef: 0.25, specular_exp: 30.0, ..Default::default() });
     purpur.normal_strength = 0.9;
     entries[block::PURPUR as usize] = Some(purpur);
+
+    let mut end_stone_bricks = Material::uniform_bumped("end_stone_bricks", seed, MatParams { specular_coef: 0.1, specular_exp: 16.0, ..Default::default() });
+    end_stone_bricks.normal_strength = 1.0;
+    entries[block::END_STONE_BRICKS as usize] = Some(end_stone_bricks);
 
     // Cristal del End: emisivo (se registra como luz puntual), refractivo
     // (ior alto, como vidrio grueso) y muy reflectivo.
@@ -303,6 +370,21 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     let mut chorus = Material::uniform("chorus", seed, MatParams { specular_coef: 0.05, specular_exp: 6.0, ..Default::default() });
     chorus.alpha_cutout = true;
     entries[block::CHORUS as usize] = Some(chorus);
+
+    // Purpur pillar: variante en columna del purpur, para las torres.
+    let mut purpur_pillar = Material::uniform_bumped("purpur_pillar", seed, MatParams { specular_coef: 0.28, specular_exp: 32.0, ..Default::default() });
+    purpur_pillar.normal_strength = 0.9;
+    entries[block::PURPUR_PILLAR as usize] = Some(purpur_pillar);
+
+    // Tallo de planta chorus: morado oscuro solido, no cutout (a diferencia
+    // de la flor `chorus`, que si lo es).
+    entries[block::CHORUS_PLANT as usize] = Some(Material::uniform("chorus_plant", seed, MatParams { specular_coef: 0.04, specular_exp: 6.0, ..Default::default() }));
+
+    // Vidrio morado para las ventanas de la ciudad: refractivo como el
+    // vidrio comun pero con tinte magenta.
+    let mut magenta_glass = Material::uniform("magenta_glass", seed, MatParams { specular_coef: 0.6, specular_exp: 120.0, transparency: 0.85, reflectivity: 0.08, ior: 1.5, ..Default::default() });
+    magenta_glass.tint = Vec3::new(1.0, 0.55, 0.95);
+    entries[block::MAGENTA_GLASS as usize] = Some(magenta_glass);
 
     MaterialTable { entries }
 }

@@ -478,6 +478,29 @@ fn end_stone(seed: u32) -> Vec<u8> {
     buf
 }
 
+fn end_stone_bricks(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    let brick_w = 8u32;
+    let brick_h = 4u32;
+    for y in 0..SIZE {
+        let row = y / brick_h;
+        let offset = if row.is_multiple_of(2) { 0 } else { brick_w / 2 };
+        for x in 0..SIZE {
+            let bx = (x + offset) % SIZE;
+            let mortar = bx.is_multiple_of(brick_w) || y.is_multiple_of(brick_h);
+            let n = rand01(seed, x, y);
+            if mortar {
+                let v = vary(175, 10, n);
+                put(&mut buf, x, y, [v, (v as i32 - 6).clamp(0, 255) as u8, (v as i32 - 30).clamp(0, 255) as u8, 255]);
+            } else {
+                let v = vary(224, 10, n);
+                put(&mut buf, x, y, [v, (v as i32 - 4).clamp(0, 255) as u8, (v as i32 - 40).clamp(0, 255) as u8, 255]);
+            }
+        }
+    }
+    buf
+}
+
 fn purpur(seed: u32) -> Vec<u8> {
     let mut buf = blank();
     let cell = 4u32;
@@ -572,6 +595,7 @@ pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
         "magma_emission" => magma_emission(seed),
         "basalt" => basalt(seed),
         "end_stone" => end_stone(seed),
+        "end_stone_bricks" => end_stone_bricks(seed),
         "purpur" => purpur(seed),
         "end_crystal" => end_crystal(seed),
         "end_rod" => end_rod(seed),

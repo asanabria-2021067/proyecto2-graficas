@@ -22,14 +22,14 @@ pub struct Environment {
 
 pub fn day_environment() -> Environment {
     Environment {
-        sun: Sun { dir: Vec3::new(-0.45, -0.82, -0.35).normalize(), color: Vec3::new(1.0, 0.96, 0.88), intensity: 1.5 },
+        sun: Sun { dir: Vec3::new(-0.8013, -0.2079, -0.5610), color: Vec3::new(1.0, 0.9, 0.75), intensity: 1.6 },
         ambient: Vec3::new(0.22, 0.26, 0.32),
     }
 }
 
 pub fn night_environment() -> Environment {
     Environment {
-        sun: Sun { dir: Vec3::new(0.3, -0.9, 0.25).normalize(), color: Vec3::new(0.55, 0.65, 0.95), intensity: 0.1 },
+        sun: Sun { dir: Vec3::new(0.3253, -0.3090, 0.8937), color: Vec3::new(0.55, 0.65, 0.95), intensity: 0.1 },
         ambient: Vec3::new(0.02, 0.022, 0.045),
     }
 }

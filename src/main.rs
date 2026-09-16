@@ -7,9 +7,11 @@ mod intersect;
 mod lights;
 mod material;
 mod math;
+mod noise;
 mod render;
 mod scene;
 mod shading;
+mod skybox;
 mod texgen;
 mod texture;
 mod world;
@@ -25,6 +27,7 @@ use math::Vec3;
 use render::{default_thread_count, render_frame};
 use scene::{max_depth_for_quality, Scene};
 use shading::{day_environment, night_environment, Environment};
+use skybox::Skybox;
 use world::World;
 
 const INTERNAL_W: u32 = 480;
@@ -75,16 +78,6 @@ fn build_test_world() -> World {
     world
 }
 
-pub fn sky_color(dir: Vec3, night: bool) -> Vec3 {
-    let t = (dir.y * 0.5 + 0.5).clamp(0.0, 1.0);
-    let (bottom, top) = if night {
-        (Vec3::new(0.02, 0.02, 0.05), Vec3::new(0.05, 0.06, 0.16))
-    } else {
-        (Vec3::new(0.75, 0.85, 0.95), Vec3::new(0.15, 0.35, 0.75))
-    };
-    bottom.lerp(top, t)
-}
-
 fn build_camera(args: &Args) -> Camera {
     Camera::new(Vec3::new(13.0, 1.5, 6.5), args.yaw, args.pitch, args.dist, 5.0, 300.0, 50.0)
 }
@@ -97,11 +90,25 @@ fn environment_for(night: bool) -> Environment {
     }
 }
 
+fn build_skybox(seed: u32) -> Skybox {
+    Skybox::build(seed, day_environment().sun.dir, night_environment().sun.dir)
+}
+
 fn run_render_mode(args: &Args, path: &str) {
     let world = build_test_world();
     let materials = material::build_material_table(args.seed);
     let light_grid = build_light_grid(&world, &materials, 6.0);
-    let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(args.night), night: args.night, max_depth: max_depth_for_quality(3), normalmaps: !args.no_normalmaps };
+    let skybox = build_skybox(args.seed);
+    let scene = Scene {
+        world: &world,
+        materials: &materials,
+        lights: &light_grid,
+        skybox: &skybox,
+        env: environment_for(args.night),
+        night: args.night,
+        max_depth: max_depth_for_quality(3),
+        normalmaps: !args.no_normalmaps,
+    };
     let cam = build_camera(args);
     let mut fb = Framebuffer::new(args.width, args.height);
     render_frame(&mut fb, &cam, &scene, default_thread_count());
@@ -113,7 +120,17 @@ fn run_bench_mode(args: &Args) {
     let world = build_test_world();
     let materials = material::build_material_table(args.seed);
     let light_grid = build_light_grid(&world, &materials, 6.0);
-    let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(args.night), night: args.night, max_depth: max_depth_for_quality(2), normalmaps: !args.no_normalmaps };
+    let skybox = build_skybox(args.seed);
+    let scene = Scene {
+        world: &world,
+        materials: &materials,
+        lights: &light_grid,
+        skybox: &skybox,
+        env: environment_for(args.night),
+        night: args.night,
+        max_depth: max_depth_for_quality(2),
+        normalmaps: !args.no_normalmaps,
+    };
     bench::run(&scene, args.width, args.height);
 }
 
@@ -139,6 +156,7 @@ fn run_window_mode(args: &Args) {
     let world = build_test_world();
     let materials = material::build_material_table(args.seed);
     let light_grid = build_light_grid(&world, &materials, 6.0);
+    let skybox = build_skybox(args.seed);
     let mut night = args.night;
     let mut normalmaps = !args.no_normalmaps;
     let mut quality: u8 = 2;
@@ -219,7 +237,16 @@ fn run_window_mode(args: &Args) {
         let dirty = last_state != Some(state);
 
         if dirty {
-            let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(night), night, max_depth: max_depth_for_quality(quality), normalmaps };
+            let scene = Scene {
+                world: &world,
+                materials: &materials,
+                lights: &light_grid,
+                skybox: &skybox,
+                env: environment_for(night),
+                night,
+                max_depth: max_depth_for_quality(quality),
+                normalmaps,
+            };
             let t0 = std::time::Instant::now();
             render_frame(&mut fb, &cam, &scene, default_thread_count());
             let last_ms = t0.elapsed().as_secs_f64() * 1000.0;

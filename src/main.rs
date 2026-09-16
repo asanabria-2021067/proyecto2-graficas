@@ -101,7 +101,7 @@ fn run_render_mode(args: &Args, path: &str) {
     let world = build_test_world();
     let materials = material::build_material_table(args.seed);
     let light_grid = build_light_grid(&world, &materials, 6.0);
-    let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(args.night), night: args.night, max_depth: max_depth_for_quality(3) };
+    let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(args.night), night: args.night, max_depth: max_depth_for_quality(3), normalmaps: !args.no_normalmaps };
     let cam = build_camera(args);
     let mut fb = Framebuffer::new(args.width, args.height);
     render_frame(&mut fb, &cam, &scene, default_thread_count());
@@ -113,7 +113,7 @@ fn run_bench_mode(args: &Args) {
     let world = build_test_world();
     let materials = material::build_material_table(args.seed);
     let light_grid = build_light_grid(&world, &materials, 6.0);
-    let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(args.night), night: args.night, max_depth: max_depth_for_quality(2) };
+    let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(args.night), night: args.night, max_depth: max_depth_for_quality(2), normalmaps: !args.no_normalmaps };
     bench::run(&scene, args.width, args.height);
 }
 
@@ -219,7 +219,7 @@ fn run_window_mode(args: &Args) {
         let dirty = last_state != Some(state);
 
         if dirty {
-            let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(night), night, max_depth: max_depth_for_quality(quality) };
+            let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(night), night, max_depth: max_depth_for_quality(quality), normalmaps };
             let t0 = std::time::Instant::now();
             render_frame(&mut fb, &cam, &scene, default_thread_count());
             let last_ms = t0.elapsed().as_secs_f64() * 1000.0;

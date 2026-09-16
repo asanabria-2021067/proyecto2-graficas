@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use crate::math::Vec3;
-use crate::texture::{load_or_generate, Texture};
+use crate::texture::{load_or_generate, load_or_generate_normal, Texture};
 
 pub mod block {
     pub const AIR: u8 = 0;
@@ -31,6 +31,14 @@ pub struct FaceTex {
 impl FaceTex {
     fn new(albedo: Texture) -> Self {
         let normal = Texture::flat_normal(albedo.width, albedo.height);
+        FaceTex { albedo, normal }
+    }
+
+    /// Uses assets/textures/<name>_n.bmp if present, otherwise derives a
+    /// normal map from the albedo's own texture detail (Sobel).
+    fn bumped(name: &str, seed: u32) -> Self {
+        let albedo = load_or_generate(name, seed);
+        let normal = load_or_generate_normal(name, &albedo);
         FaceTex { albedo, normal }
     }
 }
@@ -86,6 +94,26 @@ impl Material {
             absorption: Vec3::zero(),
         }
     }
+
+    /// Same as `uniform` but with a real (loaded or Sobel-derived) normal map
+    /// on every face instead of the flat placeholder.
+    fn uniform_bumped(name: &str, seed: u32, p: MatParams) -> Self {
+        Material {
+            top: FaceTex::bumped(name, seed),
+            side: FaceTex::bumped(name, seed),
+            bottom: FaceTex::bumped(name, seed),
+            tint: Vec3::splat(1.0),
+            specular_coef: p.specular_coef,
+            specular_exp: p.specular_exp,
+            transparency: p.transparency,
+            reflectivity: p.reflectivity,
+            ior: p.ior,
+            emission: p.emission,
+            normal_strength: 1.0,
+            alpha_cutout: false,
+            absorption: Vec3::zero(),
+        }
+    }
 }
 
 pub struct MaterialTable {
@@ -110,16 +138,18 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     entries[block::DIRT as usize] = Some(Material::uniform("dirt", seed, MatParams { specular_coef: 0.03, specular_exp: 6.0, ..Default::default() }));
     entries[block::SAND as usize] = Some(Material::uniform("sand", seed, MatParams { specular_coef: 0.05, specular_exp: 10.0, ..Default::default() }));
 
-    let mut stone_bricks = Material::uniform("stone_bricks", seed, MatParams { specular_coef: 0.15, specular_exp: 24.0, reflectivity: 0.05, ..Default::default() });
+    let mut stone_bricks = Material::uniform_bumped("stone_bricks", seed, MatParams { specular_coef: 0.15, specular_exp: 24.0, reflectivity: 0.05, ..Default::default() });
     stone_bricks.normal_strength = 1.2;
     entries[block::STONE_BRICKS as usize] = Some(stone_bricks);
 
     let mut oak_log = Material::uniform("oak_log_top", seed, MatParams { specular_coef: 0.05, specular_exp: 8.0, ..Default::default() });
-    oak_log.side = FaceTex::new(load_or_generate("oak_log_side", seed));
-    oak_log.bottom = FaceTex::new(load_or_generate("oak_log_top", seed));
+    oak_log.top = FaceTex::bumped("oak_log_top", seed);
+    oak_log.side = FaceTex::bumped("oak_log_side", seed);
+    oak_log.bottom = FaceTex::bumped("oak_log_top", seed);
+    oak_log.normal_strength = 1.0;
     entries[block::OAK_LOG as usize] = Some(oak_log);
 
-    let mut oak_planks = Material::uniform("oak_planks", seed, MatParams { specular_coef: 0.08, specular_exp: 12.0, ..Default::default() });
+    let mut oak_planks = Material::uniform_bumped("oak_planks", seed, MatParams { specular_coef: 0.08, specular_exp: 12.0, ..Default::default() });
     oak_planks.normal_strength = 0.8;
     entries[block::OAK_PLANKS as usize] = Some(oak_planks);
 
@@ -137,7 +167,7 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     let glowstone = Material::uniform("glowstone", seed, MatParams { emission: Vec3::new(1.0, 0.85, 0.5) * 2.5, ..Default::default() });
     entries[block::GLOWSTONE as usize] = Some(glowstone);
 
-    let mut iron_block = Material::uniform("iron_block", seed, MatParams { specular_coef: 0.4, specular_exp: 60.0, reflectivity: 0.55, ..Default::default() });
+    let mut iron_block = Material::uniform_bumped("iron_block", seed, MatParams { specular_coef: 0.4, specular_exp: 60.0, reflectivity: 0.55, ..Default::default() });
     iron_block.normal_strength = 0.6;
     entries[block::IRON_BLOCK as usize] = Some(iron_block);
 

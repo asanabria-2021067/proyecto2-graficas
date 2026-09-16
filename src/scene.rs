@@ -3,7 +3,7 @@ use crate::lights::LightGrid;
 use crate::material::{Material, MaterialTable};
 use crate::math::{Ray, Vec3};
 use crate::render::Tracer;
-use crate::shading::{aces_tonemap, beer_lambert, is_visible, shade_surface, Environment};
+use crate::shading::{aces_tonemap, beer_lambert, face_tex, is_visible, perturb_normal, shade_surface, Environment};
 use crate::world::World;
 
 const EPS: f32 = 1e-3;
@@ -29,6 +29,7 @@ pub struct Scene<'a> {
     pub env: Environment,
     pub night: bool,
     pub max_depth: u32,
+    pub normalmaps: bool,
 }
 
 impl Tracer for Scene<'_> {
@@ -60,15 +61,21 @@ impl Scene<'_> {
         // Cuando el bloque golpeado es aire (0), en realidad estamos saliendo
         // de `current_medium` hacia afuera: no hay textura propia que sombrear,
         // solo la reflexion/refraccion de la superficie del medio que dejamos.
+        let surface_mat = if hit.block == 0 { materials.get(current_medium) } else { materials.get(hit.block) };
+
+        let shading_normal = match surface_mat {
+            Some(mat) => perturb_normal(&hit, face_tex(mat, hit.face), mat.normal_strength, self.normalmaps),
+            None => hit.normal,
+        };
+
         let local = if hit.block == 0 {
             Vec3::zero()
         } else {
-            shade_surface(&hit, hit.normal, -ray.dir, self.world, self.materials, self.lights, &self.env)
+            shade_surface(&hit, shading_normal, -ray.dir, self.world, self.materials, self.lights, &self.env)
         };
 
-        let surface_mat = if hit.block == 0 { materials.get(current_medium) } else { materials.get(hit.block) };
         let mut result = match surface_mat {
-            Some(mat) => self.specular_bounce(&hit, ray, mat, current_medium, depth, local),
+            Some(mat) => self.specular_bounce(&hit, shading_normal, ray, mat, current_medium, depth, local),
             None => local,
         };
 
@@ -83,11 +90,16 @@ impl Scene<'_> {
     /// Mixes in reflection and (for transparent materials) refraction using
     /// Fresnel-Schlick to split energy between the two, with total internal
     /// reflection redirecting the refracted share back into reflection.
-    fn specular_bounce(&self, hit: &HitInfo, ray: Ray, mat: &Material, current_medium: u8, depth: u32, local: Vec3) -> Vec3 {
+    #[allow(clippy::too_many_arguments)]
+    fn specular_bounce(&self, hit: &HitInfo, shading_normal: Vec3, ray: Ray, mat: &Material, current_medium: u8, depth: u32, local: Vec3) -> Vec3 {
         if depth >= self.max_depth {
             return local;
         }
-        let n = hit.normal;
+        // La normal perturbada por el normal map gobierna la direccion de los
+        // rebotes; la normal geometrica (hit.normal) sigue offseteando el
+        // origen del rayo para no perforar el voxel por acne.
+        let n = shading_normal;
+        let geo_n = hit.normal;
 
         if mat.transparency > 0.001 {
             let current_ior = if current_medium == 0 { 1.0 } else { self.materials.get(current_medium).map(|m| m.ior).unwrap_or(1.0) };
@@ -112,12 +124,12 @@ impl Scene<'_> {
 
             if reflect_amt > MIN_CONTRIB {
                 let rdir = ray.dir.reflect(n);
-                let rorigin = hit.point + n * EPS;
+                let rorigin = hit.point + geo_n * EPS;
                 out += self.trace_recursive(Ray::new(rorigin, rdir), depth + 1, current_medium) * reflect_amt;
             }
             if let Some(rdir) = refract_dir {
                 if refract_amt > MIN_CONTRIB {
-                    let rorigin = hit.point - n * EPS;
+                    let rorigin = hit.point - geo_n * EPS;
                     let target_medium = if hit.block == 0 { 0 } else { hit.block };
                     out += self.trace_recursive(Ray::new(rorigin, rdir), depth + 1, target_medium) * refract_amt;
                 }
@@ -125,7 +137,7 @@ impl Scene<'_> {
             out
         } else if mat.reflectivity > 0.001 {
             let rdir = ray.dir.reflect(n);
-            let rorigin = hit.point + n * EPS;
+            let rorigin = hit.point + geo_n * EPS;
             let refl = self.trace_recursive(Ray::new(rorigin, rdir), depth + 1, current_medium);
             local * (1.0 - mat.reflectivity) + refl * mat.reflectivity
         } else {

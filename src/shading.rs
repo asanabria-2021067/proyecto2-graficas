@@ -43,6 +43,35 @@ pub fn face_tex(mat: &Material, face: Face) -> &FaceTex {
     }
 }
 
+/// Fixed tangent/bitangent per cube face, coherent with the UV convention in
+/// `intersect::face_uv` (u increasing along T, v increasing along B).
+#[inline]
+fn face_tbn(face: Face) -> (Vec3, Vec3, Vec3) {
+    match face {
+        Face::PX => (Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, -1.0, 0.0), Vec3::new(1.0, 0.0, 0.0)),
+        Face::NX => (Vec3::new(0.0, 0.0, -1.0), Vec3::new(0.0, -1.0, 0.0), Vec3::new(-1.0, 0.0, 0.0)),
+        Face::PZ => (Vec3::new(-1.0, 0.0, 0.0), Vec3::new(0.0, -1.0, 0.0), Vec3::new(0.0, 0.0, 1.0)),
+        Face::NZ => (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, -1.0, 0.0), Vec3::new(0.0, 0.0, -1.0)),
+        Face::PY => (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, 1.0, 0.0)),
+        Face::NY => (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), Vec3::new(0.0, -1.0, 0.0)),
+    }
+}
+
+/// Perturbs the geometric face normal with the material's normal map for
+/// this hit, scaled by `normal_strength`. Used for diffuse, specular,
+/// reflection and refraction alike; disabled (returns the flat geometric
+/// normal) when `enabled` is false (the N key / --no-normalmaps).
+#[inline]
+pub fn perturb_normal(hit: &HitInfo, tex: &FaceTex, strength: f32, enabled: bool) -> Vec3 {
+    if !enabled || strength <= 0.0 {
+        return hit.normal;
+    }
+    let raw = tex.normal.sample_rgb(hit.uv.0, hit.uv.1);
+    let tangent_n = Vec3::new((raw.x * 2.0 - 1.0) * strength, (raw.y * 2.0 - 1.0) * strength, raw.z * 2.0 - 1.0);
+    let (t, b, n) = face_tbn(hit.face);
+    (t * tangent_n.x + b * tangent_n.y + n * tangent_n.z).normalize()
+}
+
 /// Shared DDA-traversal predicate: stops on any solid block, except that
 /// alpha-cutout materials (leaves, lamp frames) let the ray pass through
 /// their transparent texels. Used for primary rays and shadow rays alike.

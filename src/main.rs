@@ -12,6 +12,7 @@ mod render;
 mod scene;
 mod shading;
 mod skybox;
+mod terrain;
 mod texgen;
 mod texture;
 mod world;
@@ -21,65 +22,50 @@ use raylib::prelude::*;
 use camera::Camera;
 use cli::Args;
 use framebuffer::Framebuffer;
-use lights::build_light_grid;
-use material::block;
+use lights::{build_light_grid, LightGrid};
+use material::MaterialTable;
 use math::Vec3;
 use render::{default_thread_count, render_frame};
 use scene::{max_depth_for_quality, Scene};
 use shading::{day_environment, night_environment, Environment};
 use skybox::Skybox;
+use terrain::{generate_island, Heightmap, IslandParams};
 use world::World;
 
 const INTERNAL_W: u32 = 480;
 const INTERNAL_H: u32 = 270;
+const WORLD_NX: i32 = 100;
+const WORLD_NY: i32 = 56;
+const WORLD_NZ: i32 = 100;
 
-/// Fase 5 test scene: fase 4 (materiales + pared con sombra + lamparas de
-/// noche) mas un estanque de agua sobre arena para ver la refraccion del
-/// fondo y el vidrio/hierro de la vitrina para ver reflexion. La escena
-/// final del faro llega en fase 9.
-fn build_test_world() -> World {
-    let mut world = World::new(28, 10, 14);
-    world.fill_box((0, 0, 0), (27, 0, 13), block::GRASS);
-
-    let showcase = [
-        block::DIRT,
-        block::SAND,
-        block::STONE_BRICKS,
-        block::OAK_LOG,
-        block::OAK_PLANKS,
-        block::LEAVES,
-        block::WATER,
-        block::GLASS,
-        block::GLOWSTONE,
-        block::IRON_BLOCK,
-        block::LAMP_FRAME,
-    ];
-    for (i, &id) in showcase.iter().enumerate() {
-        let x = 2 + i as i32 * 2;
-        world.set(x, 1, 4, id);
-        if id == block::LAMP_FRAME {
-            world.set(x, 2, 4, block::GLOWSTONE);
-        }
-    }
-
-    // Pared que proyecta sombra del sol sobre la plataforma.
-    world.fill_box((4, 1, 9), (18, 5, 9), block::STONE_BRICKS);
-
-    // Un par de postes con lampara de glowstone, para ver luces puntuales de noche.
-    for &x in &[3, 24] {
-        world.fill_box((x, 1, 11), (x, 3, 11), block::OAK_LOG);
-        world.set(x, 4, 11, block::GLOWSTONE);
-    }
-
-    // Estanque de agua sobre arena: refraccion del fondo visible a traves del agua.
-    world.fill_box((6, 0, 1), (10, 0, 3), block::SAND);
-    world.fill_box((6, 1, 1), (10, 1, 3), block::WATER);
-
-    world
+/// Fase 8 test scene: isla flotante procedural (heightmap fBm + mascara radial
+/// deformada + base conica irregular + arboles). La escena final del faro
+/// (fase 9) se construye encima de este terreno.
+#[allow(dead_code)] // heightmap se usa en fase 9 para ubicar estructuras
+struct WorldData {
+    world: World,
+    materials: MaterialTable,
+    lights: LightGrid,
+    heightmap: Heightmap,
+    island: IslandParams,
+    gen_ms: f64,
 }
 
-fn build_camera(args: &Args) -> Camera {
-    Camera::new(Vec3::new(13.0, 1.5, 6.5), args.yaw, args.pitch, args.dist, 5.0, 300.0, 50.0)
+fn build_world_data(seed: u32) -> WorldData {
+    let t0 = std::time::Instant::now();
+    let mut world = World::new(WORLD_NX, WORLD_NY, WORLD_NZ);
+    let island = IslandParams::main_island(&world);
+    let heightmap = generate_island(&mut world, seed, &island);
+    let materials = material::build_material_table(seed);
+    let lights = build_light_grid(&world, &materials, 8.0);
+    let gen_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    WorldData { world, materials, lights, heightmap, island, gen_ms }
+}
+
+fn build_camera(args: &Args, wd: &WorldData) -> Camera {
+    let center = Vec3::new(wd.island.center_x as f32, wd.island.top_y as f32, wd.island.center_z as f32);
+    let radius = wd.island.radius;
+    Camera::new(center, args.yaw, args.pitch, args.dist, radius * 0.6, radius * 8.0, 50.0)
 }
 
 fn environment_for(night: bool) -> Environment {
@@ -95,21 +81,20 @@ fn build_skybox(seed: u32) -> Skybox {
 }
 
 fn run_render_mode(args: &Args, path: &str) {
-    let world = build_test_world();
-    let materials = material::build_material_table(args.seed);
-    let light_grid = build_light_grid(&world, &materials, 6.0);
+    let wd = build_world_data(args.seed);
+    println!("terreno generado en {:.2} ms (semilla {})", wd.gen_ms, args.seed);
     let skybox = build_skybox(args.seed);
     let scene = Scene {
-        world: &world,
-        materials: &materials,
-        lights: &light_grid,
+        world: &wd.world,
+        materials: &wd.materials,
+        lights: &wd.lights,
         skybox: &skybox,
         env: environment_for(args.night),
         night: args.night,
         max_depth: max_depth_for_quality(3),
         normalmaps: !args.no_normalmaps,
     };
-    let cam = build_camera(args);
+    let cam = build_camera(args, &wd);
     let mut fb = Framebuffer::new(args.width, args.height);
     render_frame(&mut fb, &cam, &scene, default_thread_count());
     image_io::write_framebuffer_png(path, &fb).expect("no se pudo escribir el PNG");
@@ -117,21 +102,20 @@ fn run_render_mode(args: &Args, path: &str) {
 }
 
 fn run_bench_mode(args: &Args) {
-    let world = build_test_world();
-    let materials = material::build_material_table(args.seed);
-    let light_grid = build_light_grid(&world, &materials, 6.0);
+    let wd = build_world_data(args.seed);
     let skybox = build_skybox(args.seed);
     let scene = Scene {
-        world: &world,
-        materials: &materials,
-        lights: &light_grid,
+        world: &wd.world,
+        materials: &wd.materials,
+        lights: &wd.lights,
         skybox: &skybox,
         env: environment_for(args.night),
         night: args.night,
         max_depth: max_depth_for_quality(2),
         normalmaps: !args.no_normalmaps,
     };
-    bench::run(&scene, args.width, args.height);
+    let center = Vec3::new(wd.island.center_x as f32, wd.island.top_y as f32, wd.island.center_z as f32);
+    bench::run(&scene, args.width, args.height, center, wd.island.radius * 2.0);
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -152,10 +136,9 @@ fn run_window_mode(args: &Args) {
         .build();
     rl.set_target_fps(60);
 
-    let mut cam = build_camera(args);
-    let world = build_test_world();
-    let materials = material::build_material_table(args.seed);
-    let light_grid = build_light_grid(&world, &materials, 6.0);
+    let mut wd = build_world_data(args.seed);
+    let mut gen_ms = wd.gen_ms;
+    let mut cam = build_camera(args, &wd);
     let skybox = build_skybox(args.seed);
     let mut night = args.night;
     let mut normalmaps = !args.no_normalmaps;
@@ -211,6 +194,8 @@ fn run_window_mode(args: &Args) {
         }
         if rl.is_key_pressed(KeyboardKey::KEY_G) {
             seed = seed.wrapping_add(1);
+            wd = build_world_data(seed);
+            gen_ms = wd.gen_ms;
         }
         if rl.is_key_pressed(KeyboardKey::KEY_ONE) {
             quality = 1;
@@ -238,9 +223,9 @@ fn run_window_mode(args: &Args) {
 
         if dirty {
             let scene = Scene {
-                world: &world,
-                materials: &materials,
-                lights: &light_grid,
+                world: &wd.world,
+                materials: &wd.materials,
+                lights: &wd.lights,
                 skybox: &skybox,
                 env: environment_for(night),
                 night,
@@ -262,7 +247,7 @@ fn run_window_mode(args: &Args) {
             fb.draw_text(4, 4, &format!("FPS:{fps_est:.0} MS:{last_ms:.1}"), 0x00FFFFFF, 1);
             fb.draw_text(4, 12, &format!("RES:{INTERNAL_W}X{INTERNAL_H}"), 0x00FFFFFF, 1);
             fb.draw_text(4, 20, &format!("SEED:{seed} {mode} Q:{quality_name}"), 0x00FFFFFF, 1);
-            fb.draw_text(4, 28, &format!("NORMALMAPS:{nm}"), 0x00FFFFFF, 1);
+            fb.draw_text(4, 28, &format!("NORMALMAPS:{nm} GEN:{gen_ms:.1}MS"), 0x00FFFFFF, 1);
 
             rgba.clear();
             for &p in &fb.pixels {

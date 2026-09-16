@@ -148,9 +148,9 @@ pub fn shade_surface(hit: &HitInfo, normal: Vec3, view_dir: Vec3, world: &World,
         }
     }
 
-    let mut nearby = Vec::with_capacity(MAX_LIGHTS_PER_POINT);
-    lights.query_nearby(hit.point, MAX_LIGHTS_PER_POINT, &mut nearby);
-    for &idx in &nearby {
+    let mut nearby = [0u16; MAX_LIGHTS_PER_POINT];
+    let nearby_count = lights.query_nearby(hit.point, &mut nearby);
+    for &idx in &nearby[..nearby_count] {
         let light = &lights.lights[idx as usize];
         let to_light = light.pos - hit.point;
         let dist = to_light.length();

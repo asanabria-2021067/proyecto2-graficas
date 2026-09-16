@@ -147,6 +147,8 @@ fn run_window_mode(args: &Args) {
     let mut auto_rotate = false;
 
     let mut fb = Framebuffer::new(INTERNAL_W, INTERNAL_H);
+    let mut fb_low = Framebuffer::new(INTERNAL_W / 2, INTERNAL_H / 2);
+    let mut fb_high = Framebuffer::new(INTERNAL_W * 2, INTERNAL_H * 2);
     let mut rgba = vec![0u8; (INTERNAL_W * INTERNAL_H * 4) as usize];
 
     let image = Image::gen_image_color(INTERNAL_W as i32, INTERNAL_H as i32, Color::BLACK);
@@ -155,33 +157,42 @@ fn run_window_mode(args: &Args) {
         .expect("no se pudo crear la textura del framebuffer");
 
     let mut last_state: Option<FrameState> = None;
+    let mut was_moving = false;
 
     while !rl.window_should_close() {
         let dt = rl.get_frame_time();
         let rot_speed = 1.4_f32; // rad/s
         let zoom_speed = 30.0_f32; // units/s
+        let mut moving = false;
 
         if rl.is_key_down(KeyboardKey::KEY_A) || rl.is_key_down(KeyboardKey::KEY_LEFT) {
             cam.orbit(-rot_speed * dt, 0.0);
+            moving = true;
         }
         if rl.is_key_down(KeyboardKey::KEY_D) || rl.is_key_down(KeyboardKey::KEY_RIGHT) {
             cam.orbit(rot_speed * dt, 0.0);
+            moving = true;
         }
         if rl.is_key_down(KeyboardKey::KEY_W) || rl.is_key_down(KeyboardKey::KEY_UP) {
             cam.orbit(0.0, rot_speed * dt);
+            moving = true;
         }
         if rl.is_key_down(KeyboardKey::KEY_S) || rl.is_key_down(KeyboardKey::KEY_DOWN) {
             cam.orbit(0.0, -rot_speed * dt);
+            moving = true;
         }
         if rl.is_key_down(KeyboardKey::KEY_Q) {
             cam.zoom(-zoom_speed * dt);
+            moving = true;
         }
         if rl.is_key_down(KeyboardKey::KEY_E) {
             cam.zoom(zoom_speed * dt);
+            moving = true;
         }
         let wheel = rl.get_mouse_wheel_move();
         if wheel != 0.0 {
             cam.zoom(-wheel * 4.0);
+            moving = true;
         }
         if rl.is_key_pressed(KeyboardKey::KEY_R) {
             auto_rotate = !auto_rotate;
@@ -208,6 +219,7 @@ fn run_window_mode(args: &Args) {
         }
         if auto_rotate {
             cam.orbit(0.5 * dt, 0.0);
+            moving = true;
         }
 
         let state = FrameState {
@@ -219,7 +231,11 @@ fn run_window_mode(args: &Args) {
             quality,
             seed,
         };
-        let dirty = last_state != Some(state);
+        // Fuerza un repintado en el frame exacto en que la camara se detiene,
+        // para que corra el pase de resolucion completa aunque el estado
+        // (yaw/pitch/dist ya estables) no haya cambiado respecto al ultimo.
+        let dirty = last_state != Some(state) || (was_moving && !moving);
+        was_moving = moving;
 
         if dirty {
             let scene = Scene {
@@ -232,8 +248,23 @@ fn run_window_mode(args: &Args) {
                 max_depth: max_depth_for_quality(quality),
                 normalmaps,
             };
+            // Resolucion adaptativa: mientras la camara se mueve, renderiza a
+            // mitad de resolucion y escala; al soltar, un pase a resolucion
+            // completa (con supersampling 2x2 en calidad alta).
+            let supersample = !moving && quality == 3;
             let t0 = std::time::Instant::now();
-            render_frame(&mut fb, &cam, &scene, default_thread_count());
+            let res_label = if moving {
+                render_frame(&mut fb_low, &cam, &scene, default_thread_count());
+                fb_low.upscale_into(&mut fb);
+                "BAJA-RES"
+            } else if supersample {
+                render_frame(&mut fb_high, &cam, &scene, default_thread_count());
+                fb_high.downsample_2x2_into(&mut fb);
+                "SSAA2X"
+            } else {
+                render_frame(&mut fb, &cam, &scene, default_thread_count());
+                "COMPLETA"
+            };
             let last_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
             let fps_est = if last_ms > 0.0 { 1000.0 / last_ms } else { 0.0 };
@@ -244,7 +275,7 @@ fn run_window_mode(args: &Args) {
             };
             let mode = if night { "NOCHE" } else { "DIA" };
             let nm = if normalmaps { "ON" } else { "OFF" };
-            fb.draw_text(4, 4, &format!("FPS:{fps_est:.0} MS:{last_ms:.1}"), 0x00FFFFFF, 1);
+            fb.draw_text(4, 4, &format!("FPS:{fps_est:.0} MS:{last_ms:.1} {res_label}"), 0x00FFFFFF, 1);
             fb.draw_text(4, 12, &format!("RES:{INTERNAL_W}X{INTERNAL_H}"), 0x00FFFFFF, 1);
             fb.draw_text(4, 20, &format!("SEED:{seed} {mode} Q:{quality_name}"), 0x00FFFFFF, 1);
             fb.draw_text(4, 28, &format!("NORMALMAPS:{nm} GEN:{gen_ms:.1}MS"), 0x00FFFFFF, 1);

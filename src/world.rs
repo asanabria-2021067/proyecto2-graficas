@@ -35,7 +35,9 @@ impl World {
     #[inline]
     pub fn get(&self, x: i32, y: i32, z: i32) -> u8 {
         if self.in_bounds(x, y, z) {
-            self.blocks[self.idx(x, y, z)]
+            // Seguro: in_bounds ya garantizo que idx(x,y,z) cae dentro de blocks;
+            // esto se llama en cada paso del DDA, evitar el bounds check duplicado cuenta.
+            unsafe { *self.blocks.get_unchecked(self.idx(x, y, z)) }
         } else {
             0
         }
@@ -45,7 +47,9 @@ impl World {
     pub fn set(&mut self, x: i32, y: i32, z: i32, id: u8) {
         if self.in_bounds(x, y, z) {
             let i = self.idx(x, y, z);
-            self.blocks[i] = id;
+            unsafe {
+                *self.blocks.get_unchecked_mut(i) = id;
+            }
         }
     }
 

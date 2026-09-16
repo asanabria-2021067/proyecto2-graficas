@@ -468,10 +468,12 @@ fn end_stone(seed: u32) -> Vec<u8> {
         for x in 0..SIZE {
             let n = rand01(seed, x, y);
             let dot = rand01(seed ^ 0x3ED0, x, y) > 0.82;
+            // Amarillo verdoso palido punteado (no arena): antes salia mas
+            // bien tostado/sepia.
             if dot {
-                put(&mut buf, x, y, [vary(178, 12, n), vary(150, 12, n), vary(120, 10, n), 255]);
+                put(&mut buf, x, y, [vary(168, 12, n), vary(180, 12, n), vary(115, 12, n), 255]);
             } else {
-                put(&mut buf, x, y, [vary(220, 8, n), vary(214, 8, n), vary(168, 10, n), 255]);
+                put(&mut buf, x, y, [vary(212, 8, n), vary(224, 8, n), vary(158, 10, n), 255]);
             }
         }
     }
@@ -512,6 +514,51 @@ fn purpur(seed: u32) -> Vec<u8> {
                 put(&mut buf, x, y, [vary(110, 10, n), vary(70, 10, n), vary(120, 10, n), 255]);
             } else {
                 put(&mut buf, x, y, [vary(150, 14, n), vary(100, 12, n), vary(165, 14, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn purpur_pillar(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let col = x % 4 == 0;
+            if col {
+                put(&mut buf, x, y, [vary(115, 10, n), vary(75, 10, n), vary(125, 10, n), 255]);
+            } else {
+                put(&mut buf, x, y, [vary(158, 14, n), vary(108, 12, n), vary(172, 14, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn chorus_plant(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let knot = rand01(seed ^ 0x0740, x / 3, y / 3) > 0.6;
+            let base = if knot { 55 } else { 40 };
+            put(&mut buf, x, y, [vary(base, 8, n), vary(20, 6, n), vary(base + 15, 10, n), 255]);
+        }
+    }
+    buf
+}
+
+fn magenta_glass(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let border = x == 0 || y == 0 || x == SIZE - 1 || y == SIZE - 1;
+            let n = rand01(seed, x, y);
+            if border {
+                put(&mut buf, x, y, [vary(220, 10, n), vary(120, 10, n), vary(200, 10, n), 235]);
+            } else {
+                put(&mut buf, x, y, [vary(210, 8, n), vary(110, 8, n), vary(190, 8, n), 60]);
             }
         }
     }
@@ -773,6 +820,9 @@ pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
         "soul_fire" => soul_fire(seed),
         "soul_sand" => soul_sand(seed),
         "purpur" => purpur(seed),
+        "purpur_pillar" => purpur_pillar(seed),
+        "chorus_plant" => chorus_plant(seed),
+        "magenta_glass" => magenta_glass(seed),
         "end_crystal" => end_crystal(seed),
         "end_rod" => end_rod(seed),
         "chorus" => chorus(seed),

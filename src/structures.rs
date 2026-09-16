@@ -623,13 +623,14 @@ fn hang_glowstone_edge(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, radi
 // ---------- End ----------
 
 /// Pilares de obsidiana de altura variable con un `end_crystal` flotando
-/// (con un hueco de aire encima, no pegado) sobre cada uno.
+/// (con un hueco de aire encima, no pegado) sobre cada uno -- en el borde
+/// de la isla para no taparle el frente a la ciudad de torres.
 fn build_end_pillars(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, radius: f32, seed: u32) {
     let mut rng = Pcg32::new(seed as u64 ^ 0x3ED0_C1A1, 0x9E17);
     let count = 4;
     for i in 0..count {
         let angle = (i as f32 / count as f32) * std::f32::consts::PI * 2.0 + rng.range_f32(-0.2, 0.2);
-        let dist = radius * rng.range_f32(0.35, 0.55);
+        let dist = radius * rng.range_f32(0.75, 0.92);
         let px = cx + (angle.cos() * dist).round() as i32;
         let pz = cz + (angle.sin() * dist).round() as i32;
         let Some(base_y) = hm.top_at(px, pz) else { continue };
@@ -639,63 +640,158 @@ fn build_end_pillars(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, radius
     }
 }
 
-/// Mini "ciudad del End": torre chica de purpur con un par de ventanas de
-/// vidrio y postes de end_rod (lamparas) en las esquinas del techo.
-fn build_end_city(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
+/// Torre central de la ciudad: base de purpur_block y una columna delgada
+/// de purpur_pillar bien alta, rematada en un end_rod. Devuelve la altura
+/// de la base para anclar las escaleras diagonales.
+fn build_central_tower(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, height: i32) -> i32 {
     let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
-    flatten_area(world, cx - 4, cz - 4, cx + 4, cz + 4, base_y, block::END_STONE);
-    let y0 = base_y + 1;
-    let h = 8;
-    world.hollow_box((cx - 2, y0, cz - 2), (cx + 2, y0 + h - 1, cz + 2), block::PURPUR);
-    for &off in &[-1, 1] {
-        world.set(cx + off, y0 + 2, cz - 2, block::GLASS);
-        world.set(cx + off, y0 + 2, cz + 2, block::GLASS);
-        world.set(cx - 2, y0 + 2, cz + off, block::GLASS);
-        world.set(cx + 2, y0 + 2, cz + off, block::GLASS);
-    }
-    world.fill_box((cx, y0, cz - 2), (cx, y0 + 1, cz - 2), block::AIR); // puerta
-
-    for &(dx, dz) in &[(-2, -2), (2, -2), (-2, 2), (2, 2)] {
-        place_pillar(world, cx + dx, cz + dz, y0 + h, y0 + h + 1, block::PURPUR);
-        world.set(cx + dx, y0 + h + 2, cz + dz, block::END_ROD);
-    }
-    world.set(cx, y0 + h + 1, cz, block::PURPUR);
-    world.set(cx, y0 + h + 3, cz, block::END_ROD);
+    flatten_area(world, cx - 3, cz - 3, cx + 3, cz + 3, base_y, block::PURPUR);
+    world.fill_box((cx - 1, base_y + 1, cz - 1), (cx + 1, base_y + 2, cz + 1), block::PURPUR);
+    place_pillar(world, cx, cz, base_y + 3, base_y + height, block::PURPUR_PILLAR);
+    world.set(cx, base_y + height + 1, cz, block::END_ROD);
+    base_y
 }
 
-/// Plantas de chorus dispersas, creciendo sobre end_stone.
-fn scatter_chorus(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, radius: f32, seed: u32) {
+/// Torre secundaria de la ciudad: `floors` pisos de 7x7 apilados con
+/// paredes de end_stone_bricks, un alero de purpur que sobresale 1 bloque
+/// en la base de cada piso (con end_rods en sus esquinas) y ventanas de
+/// magenta_glass. `pointed` remata en un techo escalonado con punta en vez
+/// de quedar plano. Devuelve la altura de la base para las escaleras.
+fn build_city_tower(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, floors: i32, pointed: bool) -> i32 {
+    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
+    flatten_area(world, cx - 4, cz - 4, cx + 4, cz + 4, base_y, block::PURPUR);
+    let r = 3; // piso de 7x7
+    let mut y = base_y + 1;
+    for floor in 0..floors {
+        world.hollow_box((cx - r - 1, y, cz - r - 1), (cx + r + 1, y, cz + r + 1), block::PURPUR);
+        for &(dx, dz) in &[(-r - 1, -r - 1), (r + 1, -r - 1), (-r - 1, r + 1), (r + 1, r + 1)] {
+            world.set(cx + dx, y + 1, cz + dz, block::END_ROD);
+        }
+        y += 1;
+        let floor_h = 3;
+        world.hollow_box((cx - r, y, cz - r), (cx + r, y + floor_h - 1, cz + r), block::END_STONE_BRICKS);
+        for &off in &[-1, 1] {
+            world.set(cx + off, y + 1, cz - r, block::MAGENTA_GLASS);
+            world.set(cx + off, y + 1, cz + r, block::MAGENTA_GLASS);
+            world.set(cx - r, y + 1, cz + off, block::MAGENTA_GLASS);
+            world.set(cx + r, y + 1, cz + off, block::MAGENTA_GLASS);
+        }
+        if floor == 0 {
+            world.fill_box((cx, y, cz - r), (cx, y + 1, cz - r), block::AIR); // puerta
+        }
+        y += floor_h;
+    }
+    if pointed {
+        let cap_r = 4;
+        world.hollow_box((cx - cap_r, y, cz - cap_r), (cx + cap_r, y, cz + cap_r), block::PURPUR);
+        y += 1;
+        for inset in 1..cap_r {
+            world.fill_box((cx - cap_r + inset, y, cz - cap_r + inset), (cx + cap_r - inset, y, cz + cap_r - inset), block::PURPUR);
+            y += 1;
+        }
+        world.set(cx, y, cz, block::END_ROD);
+    }
+    base_y
+}
+
+/// Escalera diagonal de purpur (2 de ancho) entre dos puntos, con un
+/// pasamanos de purpur_pillar de un lado -- conecta la torre central con
+/// cada torre secundaria.
+fn build_diagonal_stair(world: &mut World, x0: i32, z0: i32, y0: i32, x1: i32, z1: i32, y1: i32) {
+    let dx = x1 - x0;
+    let dz = z1 - z0;
+    let steps = dx.abs().max(dz.abs()).max(1);
+    let len = ((dx * dx + dz * dz) as f32).sqrt().max(1.0);
+    let (px, pz) = (-(dz as f32) / len, (dx as f32) / len);
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let cx = x0 as f32 + dx as f32 * t;
+        let cz = z0 as f32 + dz as f32 * t;
+        let y = (y0 as f32 + (y1 - y0) as f32 * t).round() as i32;
+        for w in 0..2 {
+            let off = w as f32 - 0.5;
+            let wx = (cx + px * off).round() as i32;
+            let wz = (cz + pz * off).round() as i32;
+            world.set(wx, y, wz, block::PURPUR);
+        }
+        let rx = (cx + px).round() as i32;
+        let rz = (cz + pz).round() as i32;
+        world.set(rx, y + 1, rz, block::PURPUR_PILLAR);
+    }
+}
+
+/// Barco chico de purpur flotando cerca de la ciudad (sin apoyarse en el
+/// suelo, como los pilares con cristal): casco alargado con proa, mastil
+/// de purpur_pillar con una "vela"/cartel de end_stone_bricks y end_rods
+/// de luz.
+fn build_purpur_ship(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
+    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2) + 3;
+    for i in -4i32..=4 {
+        let width = if i.abs() > 3 { 1 } else { 2 };
+        world.fill_box((cx + i, base_y, cz - width), (cx + i, base_y, cz + width), block::PURPUR);
+    }
+    world.set(cx + 5, base_y, cz, block::PURPUR);
+    world.set(cx + 6, base_y, cz, block::PURPUR_PILLAR);
+    place_pillar(world, cx, cz, base_y + 1, base_y + 5, block::PURPUR_PILLAR);
+    world.fill_box((cx, base_y + 4, cz), (cx + 2, base_y + 4, cz), block::END_STONE_BRICKS);
+    world.set(cx + 2, base_y + 5, cz, block::END_ROD);
+    world.set(cx - 3, base_y + 1, cz, block::END_ROD);
+}
+
+/// Bosquecito de plantas chorus: tallos (`chorus_plant`) que crecen hacia
+/// arriba con alguna desviacion lateral al azar, rematados en una flor
+/// (`chorus`, alpha cutout).
+fn build_chorus_grove(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, count: u32, seed: u32) {
     let mut rng = Pcg32::new(seed as u64 ^ 0x6C02_C0DE, 0x0E27);
     let mut placed = 0;
     let mut attempts = 0;
-    while placed < 10 && attempts < 100 {
+    while placed < count && attempts < count * 20 {
         attempts += 1;
-        let x = cx + rng.range_i32(-radius as i32, radius as i32);
-        let z = cz + rng.range_i32(-radius as i32, radius as i32);
+        let x = cx + rng.range_i32(-4, 4);
+        let z = cz + rng.range_i32(-4, 4);
         let Some(y) = hm.top_at(x, z) else { continue };
         if world.get(x, y, z) != block::END_STONE {
             continue;
         }
-        let h = rng.range_i32(2, 4);
-        for i in 1..=h {
-            world.set(x, y + i, z, block::CHORUS);
+        let (mut px, mut pz, mut py) = (x, z, y);
+        let h = rng.range_i32(4, 7);
+        for _ in 0..h {
+            py += 1;
+            if rng.next_f32() < 0.3 {
+                px += rng.range_i32(-1, 1);
+                pz += rng.range_i32(-1, 1);
+            }
+            world.set(px, py, pz, block::CHORUS_PLANT);
         }
+        world.set(px, py + 1, pz, block::CHORUS);
         placed += 1;
     }
 }
 
-/// Anillo de bloques de end_stone flotando sueltos alrededor de la isla (sin
-/// tocarla), a distintas alturas -- un detalle "magico" tipico del End.
-fn build_floating_ring(world: &mut World, cx: i32, cz: i32, radius: f32, y: i32, seed: u32) {
-    let mut rng = Pcg32::new(seed as u64 ^ 0xF10A_7100, 0x77);
-    let count = 20;
-    for i in 0..count {
-        let angle = (i as f32 / count as f32) * std::f32::consts::PI * 2.0;
-        let r = radius + rng.range_f32(4.0, 9.0);
-        let x = cx + (angle.cos() * r).round() as i32;
-        let z = cz + (angle.sin() * r).round() as i32;
-        let yy = y + rng.range_i32(-3, 3);
-        world.set(x, yy, z, block::END_STONE);
+/// 2-3 mini-islas de end_stone (grillas propias, no bloques sueltos)
+/// flotando alrededor de la isla principal del End, a distintas alturas.
+fn build_mini_end_islands(islands: &mut Vec<Island>, center_world: Vec3, main_radius: f32, seed: u32) {
+    let mut rng = Pcg32::new(seed as u64 ^ 0xE1D0_15DE, 0x33);
+    let count = rng.range_i32(2, 3);
+    for _ in 0..count {
+        let angle = rng.range_f32(0.0, std::f32::consts::PI * 2.0);
+        let dist = main_radius + rng.range_f32(6.0, 14.0);
+        let radius = rng.range_i32(3, 5);
+        let cx_w = center_world.x + angle.cos() * dist;
+        let cz_w = center_world.z + angle.sin() * dist;
+        let cy_w = center_world.y + rng.range_f32(-6.0, 8.0);
+        let half = radius + 2;
+        let mut mini = World::new(half * 2 + 1, 6, half * 2 + 1);
+        for dz in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dz * dz > radius * radius {
+                    continue;
+                }
+                mini.fill_box((half + dx, 0, half + dz), (half + dx, 2, half + dz), block::END_STONE);
+            }
+        }
+        let offset = (cx_w.round() as i32 - half, cy_w.round() as i32 - 3, cz_w.round() as i32 - half);
+        islands.push(Island::new(mini, offset));
     }
 }
 
@@ -1075,8 +1171,8 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     // (offset.y positivo, mayor separacion), perfil de ruido suave y
     // redondeado (generate_soft_island). Union por un camino de bloques de
     // end_stone flotantes (no un puente solido).
-    let end_r = 26.0f32;
-    let end_gap = 22.0;
+    let end_r = 16.0f32;
+    let end_gap = 16.0;
     let end_angle = 160.0f32;
     let end_xz = (
         main_center_world.x + end_angle.to_radians().cos() * (r + end_gap + end_r),
@@ -1090,17 +1186,38 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     let end_island = BuiltIsland { index: end_idx, heightmap: end_hm, params: params_e };
 
     let (ecx, ecz, er) = (end_island.params.center_x, end_island.params.center_z, end_island.params.radius);
-    build_end_pillars(&mut islands[end_island.index].world, &end_island.heightmap, ecx, ecz, er, seed.wrapping_add(404));
+    let eseed = seed.wrapping_add(404);
 
-    let (cix, ciz) = polar(ecx, ecz, 30.0, er * 0.2);
-    build_end_city(&mut islands[end_island.index].world, &end_island.heightmap, cix, ciz);
+    // Pilares de obsidiana + end_crystal, ahora en el borde de la isla para
+    // no taparle el frente a la ciudad.
+    build_end_pillars(&mut islands[end_island.index].world, &end_island.heightmap, ecx, ecz, er, eseed);
 
-    scatter_chorus(&mut islands[end_island.index].world, &end_island.heightmap, ecx, ecz, er * 0.85, seed.wrapping_add(404));
-    build_floating_ring(&mut islands[end_island.index].world, ecx, ecz, er, end_island.params.top_y, seed.wrapping_add(404));
+    // Ciudad de torres: torre central delgada, dos torres secundarias con
+    // pisos apilados unidas por escaleras diagonales.
+    let (t1x, t1z) = polar(ecx, ecz, 40.0, er * 0.42);
+    let (t2x, t2z) = polar(ecx, ecz, 190.0, er * 0.42);
+    let central_base_y = build_central_tower(&mut islands[end_island.index].world, &end_island.heightmap, ecx, ecz, 18);
+    let tower1_base_y = build_city_tower(&mut islands[end_island.index].world, &end_island.heightmap, t1x, t1z, 2, false);
+    let tower2_base_y = build_city_tower(&mut islands[end_island.index].world, &end_island.heightmap, t2x, t2z, 3, true);
+    build_diagonal_stair(&mut islands[end_island.index].world, ecx, ecz, central_base_y + 2, t1x, t1z, tower1_base_y + 1);
+    build_diagonal_stair(&mut islands[end_island.index].world, ecx, ecz, central_base_y + 2, t2x, t2z, tower2_base_y + 1);
+
+    // Barco chico de purpur flotando cerca de la ciudad.
+    let (shx, shz) = polar(ecx, ecz, 300.0, er * 0.55);
+    build_purpur_ship(&mut islands[end_island.index].world, &end_island.heightmap, shx, shz);
+
+    // Bosquecitos de chorus alrededor de la ciudad.
+    for angle in [80.0, 140.0, 250.0] {
+        let (chx, chz) = polar(ecx, ecz, angle, er * 0.65);
+        build_chorus_grove(&mut islands[end_island.index].world, &end_island.heightmap, chx, chz, 6, eseed ^ (angle as u32));
+    }
 
     let end_bridge = BridgeStyle { deck_id: block::END_STONE_BRICKS, rail_id: block::PURPUR, support_id: block::PURPUR, lamp_id: block::END_ROD, arch: true, curve_amount: 2.5 };
     build_bridge(&mut islands, main.index, &main.heightmap, &main.params, end_island.index, &end_island.heightmap, &end_island.params, offset_e.1 - 2, &end_bridge);
     let end_center_world = island_world_center(&islands, &end_island);
+
+    // 2-3 mini-islas de end_stone flotando alrededor de la isla principal del End.
+    build_mini_end_islands(&mut islands, end_center_world, er, eseed);
 
     SceneIslands { islands, main_center: main_center_world, main_radius: r, nether_center: nether_center_world, end_center: end_center_world }
 }

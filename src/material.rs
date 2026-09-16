@@ -273,5 +273,36 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     basalt.normal_strength = 0.5;
     entries[block::BASALT as usize] = Some(basalt);
 
+    // ---------- End ----------
+
+    let mut end_stone = Material::uniform_bumped("end_stone", seed, MatParams { specular_coef: 0.06, specular_exp: 10.0, ..Default::default() });
+    end_stone.normal_strength = 0.7;
+    entries[block::END_STONE as usize] = Some(end_stone);
+
+    let mut purpur = Material::uniform_bumped("purpur", seed, MatParams { specular_coef: 0.25, specular_exp: 30.0, ..Default::default() });
+    purpur.normal_strength = 0.9;
+    entries[block::PURPUR as usize] = Some(purpur);
+
+    // Cristal del End: emisivo (se registra como luz puntual), refractivo
+    // (ior alto, como vidrio grueso) y muy reflectivo.
+    let end_crystal = Material::uniform("end_crystal", seed, MatParams {
+        specular_coef: 0.7,
+        specular_exp: 100.0,
+        transparency: 0.6,
+        reflectivity: 0.5,
+        ior: 1.6,
+        emission: Vec3::new(0.9, 0.55, 1.0) * 1.8,
+    });
+    entries[block::END_CRYSTAL as usize] = Some(end_crystal);
+
+    // Barra fina blanca emisiva: bloque entero por simplicidad, pero se lee
+    // como lampara por la emision fuerte y pareja.
+    let end_rod = Material::uniform("end_rod", seed, MatParams { specular_coef: 0.3, specular_exp: 40.0, emission: Vec3::new(0.9, 0.95, 1.0) * 2.0, ..Default::default() });
+    entries[block::END_ROD as usize] = Some(end_rod);
+
+    let mut chorus = Material::uniform("chorus", seed, MatParams { specular_coef: 0.05, specular_exp: 6.0, ..Default::default() });
+    chorus.alpha_cutout = true;
+    entries[block::CHORUS as usize] = Some(chorus);
+
     MaterialTable { entries }
 }

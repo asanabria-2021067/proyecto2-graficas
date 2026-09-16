@@ -457,6 +457,88 @@ fn basalt(seed: u32) -> Vec<u8> {
     buf
 }
 
+fn end_stone(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let dot = rand01(seed ^ 0x3ED0, x, y) > 0.82;
+            if dot {
+                put(&mut buf, x, y, [vary(178, 12, n), vary(150, 12, n), vary(120, 10, n), 255]);
+            } else {
+                put(&mut buf, x, y, [vary(220, 8, n), vary(214, 8, n), vary(168, 10, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn purpur(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    let cell = 4u32;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let border = x % cell == 0 || y % cell == 0;
+            if border {
+                put(&mut buf, x, y, [vary(110, 10, n), vary(70, 10, n), vary(120, 10, n), 255]);
+            } else {
+                put(&mut buf, x, y, [vary(150, 14, n), vary(100, 12, n), vary(165, 14, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn end_crystal(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    let c = (SIZE as f32 - 1.0) / 2.0;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let dx = x as f32 - c;
+            let dy = y as f32 - c;
+            let dist = (dx * dx + dy * dy).sqrt() / c;
+            let glow = (1.0 - dist).clamp(0.0, 1.0);
+            let r = vary(210, 10, n) as f32 + glow * 40.0;
+            let g = vary(140, 10, n) as f32 + glow * 60.0;
+            let b = vary(240, 8, n) as f32;
+            put(&mut buf, x, y, [r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255]);
+        }
+    }
+    buf
+}
+
+fn end_rod(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    let c = SIZE / 2;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let core = x.abs_diff(c) <= 2;
+            let v = if core { vary(250, 4, n) } else { vary(225, 10, n) };
+            put(&mut buf, x, y, [v, v, vary(200, 8, n), 255]);
+        }
+    }
+    buf
+}
+
+fn chorus(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let hole = rand01(seed ^ 0x6C02, x, y) < 0.3;
+            let r = vary(96, 18, n);
+            let g = vary(52, 14, n);
+            let b = vary(112, 18, n);
+            let a = if hole { 0 } else { 255 };
+            put(&mut buf, x, y, [r, g, b, a]);
+        }
+    }
+    buf
+}
+
 /// Generates a 16x16 RGBA8 texture by name. Unknown names fall back to a
 /// magenta/black checker so a typo is obvious instead of silently blank.
 pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
@@ -484,6 +566,11 @@ pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
         "magma" => magma(seed),
         "magma_emission" => magma_emission(seed),
         "basalt" => basalt(seed),
+        "end_stone" => end_stone(seed),
+        "purpur" => purpur(seed),
+        "end_crystal" => end_crystal(seed),
+        "end_rod" => end_rod(seed),
+        "chorus" => chorus(seed),
         _ => {
             let mut buf = blank();
             for y in 0..SIZE {

@@ -3,76 +3,49 @@ mod camera;
 mod cli;
 mod framebuffer;
 mod image_io;
+mod intersect;
 mod math;
 mod render;
+mod world;
 
 use raylib::prelude::*;
 
 use camera::Camera;
 use cli::Args;
 use framebuffer::Framebuffer;
+use intersect::{traverse, Face, HitInfo};
 use math::{Ray, Vec3};
 use render::{default_thread_count, render_frame, Tracer};
+use world::World;
 
 const INTERNAL_W: u32 = 480;
 const INTERNAL_H: u32 = 270;
 
-/// Temporary placeholder scene: gradient sky + a single test cube.
-/// Replaced in fase 2 by the voxel world + DDA intersector.
-struct DemoScene {
+/// Fase 2 test scene: a voxel world walked with the DDA intersector.
+/// Colors are per-face debug tints (no materials yet, esas llegan en fase 3);
+/// a UV checker overlay is mixed in to verify texture-coordinate orientation.
+struct WorldScene<'a> {
+    world: &'a World,
     night: bool,
 }
 
-impl Tracer for DemoScene {
+fn build_test_world() -> World {
+    let mut world = World::new(20, 12, 20);
+    world.fill_box((0, 0, 0), (15, 0, 15), 1); // plataforma 16x16
+    world.fill_box((2, 1, 2), (2, 4, 2), 2); // columna
+    world.fill_box((13, 1, 2), (13, 3, 2), 3); // columna
+    world.fill_box((2, 1, 13), (2, 6, 13), 4); // columna
+    world.hollow_box((6, 1, 6), (10, 5, 10), 3); // cuarto hueco (prueba DDA con interior de aire)
+    world
+}
+
+impl Tracer for WorldScene<'_> {
     fn trace(&self, ray: Ray) -> Vec3 {
-        match intersect_test_cube(ray) {
-            Some((_t, normal)) => shade_face(normal, self.night),
+        match traverse(self.world, ray, f32::INFINITY, |id| id != 0) {
+            Some(hit) => shade_hit(&hit, self.night),
             None => sky_color(ray.dir, self.night),
         }
     }
-}
-
-fn intersect_test_cube(ray: Ray) -> Option<(f32, Vec3)> {
-    let bmin = Vec3::new(-1.0, 0.0, -1.0);
-    let bmax = Vec3::new(1.0, 2.0, 1.0);
-    let o = [ray.origin.x, ray.origin.y, ray.origin.z];
-    let d = [ray.dir.x, ray.dir.y, ray.dir.z];
-    let lo = [bmin.x, bmin.y, bmin.z];
-    let hi = [bmax.x, bmax.y, bmax.z];
-
-    let mut tmin = 0.0001f32;
-    let mut tmax = f32::INFINITY;
-    let mut hit_axis = 0usize;
-    let mut hit_sign = -1.0f32;
-
-    for axis in 0..3 {
-        let inv_d = 1.0 / d[axis];
-        let mut t0 = (lo[axis] - o[axis]) * inv_d;
-        let mut t1 = (hi[axis] - o[axis]) * inv_d;
-        let sign = if inv_d < 0.0 { 1.0 } else { -1.0 };
-        if inv_d < 0.0 {
-            std::mem::swap(&mut t0, &mut t1);
-        }
-        if t0 > tmin {
-            tmin = t0;
-            hit_axis = axis;
-            hit_sign = sign;
-        }
-        if t1 < tmax {
-            tmax = t1;
-        }
-        if tmin > tmax {
-            return None;
-        }
-    }
-
-    let mut normal = Vec3::zero();
-    match hit_axis {
-        0 => normal.x = hit_sign,
-        1 => normal.y = hit_sign,
-        _ => normal.z = hit_sign,
-    }
-    Some((tmin, normal))
 }
 
 fn sky_color(dir: Vec3, night: bool) -> Vec3 {
@@ -84,32 +57,50 @@ fn sky_color(dir: Vec3, night: bool) -> Vec3 {
     }
 }
 
-fn shade_face(normal: Vec3, night: bool) -> Vec3 {
-    let light_dir = Vec3::new(0.4, 0.8, 0.3).normalize();
-    let ndotl = normal.dot(light_dir).max(0.05);
-    let base = if normal.x > 0.5 {
-        Vec3::new(0.85, 0.25, 0.25)
-    } else if normal.x < -0.5 {
-        Vec3::new(0.25, 0.55, 0.85)
-    } else if normal.y > 0.5 {
-        Vec3::new(0.25, 0.85, 0.25)
-    } else if normal.y < -0.5 {
-        Vec3::new(0.85, 0.85, 0.25)
-    } else if normal.z > 0.5 {
-        Vec3::new(0.85, 0.25, 0.85)
-    } else {
-        Vec3::new(0.25, 0.85, 0.85)
+fn face_base_color(face: Face, block: u8) -> Vec3 {
+    let hue = match block {
+        1 => Vec3::new(0.55, 0.55, 0.55),
+        2 => Vec3::new(0.8, 0.3, 0.25),
+        3 => Vec3::new(0.3, 0.55, 0.8),
+        4 => Vec3::new(0.35, 0.75, 0.3),
+        _ => Vec3::new(0.8, 0.8, 0.8),
     };
+    // Slight per-face tint on top of the block hue, so adjacent faces of the
+    // same block are still visually distinguishable (matches phase-1 style).
+    let tint = match face {
+        Face::PY => 1.15,
+        Face::NY => 0.6,
+        Face::PX | Face::NZ => 1.0,
+        Face::NX | Face::PZ => 0.85,
+    };
+    (hue * tint).clamp01()
+}
+
+fn checker(uv: (f32, f32), cells: f32) -> f32 {
+    let cx = (uv.0 * cells).floor() as i32;
+    let cy = (uv.1 * cells).floor() as i32;
+    if (cx + cy) % 2 == 0 {
+        1.0
+    } else {
+        0.8
+    }
+}
+
+fn shade_hit(hit: &HitInfo, night: bool) -> Vec3 {
+    let light_dir = Vec3::new(0.4, 0.8, 0.3).normalize();
+    let ndotl = hit.normal.dot(light_dir).max(0.05);
+    let base = face_base_color(hit.face, hit.block) * checker(hit.uv, 4.0);
     let ambient = if night { 0.12 } else { 0.22 };
     base * (ambient + (1.0 - ambient) * ndotl)
 }
 
 fn build_camera(args: &Args) -> Camera {
-    Camera::new(Vec3::new(0.0, 1.0, 0.0), args.yaw, args.pitch, args.dist, 5.0, 300.0, 50.0)
+    Camera::new(Vec3::new(8.0, 2.0, 8.0), args.yaw, args.pitch, args.dist, 5.0, 300.0, 50.0)
 }
 
 fn run_render_mode(args: &Args, path: &str) {
-    let scene = DemoScene { night: args.night };
+    let world = build_test_world();
+    let scene = WorldScene { world: &world, night: args.night };
     let cam = build_camera(args);
     let mut fb = Framebuffer::new(args.width, args.height);
     render_frame(&mut fb, &cam, &scene, default_thread_count());
@@ -118,7 +109,8 @@ fn run_render_mode(args: &Args, path: &str) {
 }
 
 fn run_bench_mode(args: &Args) {
-    let scene = DemoScene { night: args.night };
+    let world = build_test_world();
+    let scene = WorldScene { world: &world, night: args.night };
     bench::run(&scene, args.width, args.height);
 }
 
@@ -141,6 +133,7 @@ fn run_window_mode(args: &Args) {
     rl.set_target_fps(60);
 
     let mut cam = build_camera(args);
+    let world = build_test_world();
     let mut night = args.night;
     let mut normalmaps = !args.no_normalmaps;
     let mut quality: u8 = 2;
@@ -221,7 +214,7 @@ fn run_window_mode(args: &Args) {
         let dirty = last_state != Some(state);
 
         if dirty {
-            let scene = DemoScene { night };
+            let scene = WorldScene { world: &world, night };
             let t0 = std::time::Instant::now();
             render_frame(&mut fb, &cam, &scene, default_thread_count());
             let last_ms = t0.elapsed().as_secs_f64() * 1000.0;

@@ -619,11 +619,25 @@ fn island_world_center(islands: &[Island], b: &BuiltIsland) -> Vec3 {
     islands[b.index].to_world_point(Vec3::new(b.params.center_x as f32, b.params.top_y as f32, b.params.center_z as f32))
 }
 
+/// Todo lo que la parte 5 necesita para la camara: la lista de islas, y el
+/// punto de mundo (mas el radio, para la principal) donde centrar la
+/// orbita para cada una de las tres islas "grandes" -- usado tanto para la
+/// vista general (centro/distancia de la principal) como para las teclas
+/// 4/5/6 que recentran la camara en la principal/Nether/End.
+pub struct SceneIslands {
+    pub islands: Vec<Island>,
+    pub main_center: Vec3,
+    pub main_radius: f32,
+    pub nether_center: Vec3,
+    pub end_center: Vec3,
+}
+
 /// Construye la isla principal (el faro, el lago, la casita) y sus dos
-/// satelites (monolito y jardin) con sus puentes. Devuelve la lista de
-/// islas (cada una su propia mini-grilla) y el punto de mundo donde deberia
-/// mirar la camara para la isla principal.
-pub fn build_lighthouse_scene(seed: u32) -> (Vec<Island>, Vec3, f32) {
+/// satelites (monolito y jardin), la isla del Nether y la isla del End, con
+/// sus puentes/caminos. Devuelve la lista de islas (cada una su propia
+/// mini-grilla) y los puntos de mundo donde deberia mirar la camara para
+/// cada una de las tres islas grandes.
+pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     let mut islands: Vec<Island> = Vec::new();
 
     let main = spawn_island(&mut islands, seed, IslandParams::new(42.0, 24), (0, 0, 0));
@@ -699,6 +713,7 @@ pub fn build_lighthouse_scene(seed: u32) -> (Vec<Island>, Vec3, f32) {
     hang_glowstone_edge(&mut islands[nether.index].world, &nether.heightmap, ncx, ncz, nr, 8, seed.wrapping_add(303));
 
     build_bridge(&mut islands, main.index, &main.heightmap, &main.params, nether.index, &nether.heightmap, &nether.params, offset_n.1 + 4, block::NETHER_BRICKS, block::OBSIDIAN);
+    let nether_center_world = island_world_center(&islands, &nether);
 
     // Isla del End: al otro costado, mas alta y mas lejos que la principal
     // (offset.y positivo, mayor separacion), perfil de ruido suave y
@@ -728,6 +743,7 @@ pub fn build_lighthouse_scene(seed: u32) -> (Vec<Island>, Vec3, f32) {
     build_floating_ring(&mut islands[end_island.index].world, ecx, ecz, er, end_island.params.top_y, seed.wrapping_add(404));
 
     build_floating_path(&mut islands, main.index, &main.heightmap, &main.params, end_island.index, &end_island.heightmap, &end_island.params);
+    let end_center_world = island_world_center(&islands, &end_island);
 
-    (islands, main_center_world, r)
+    SceneIslands { islands, main_center: main_center_world, main_radius: r, nether_center: nether_center_world, end_center: end_center_world }
 }

@@ -32,7 +32,7 @@ use render::{default_thread_count, render_frame, render_frame_ms, rotated_grid_3
 use scene::{max_depth_for_quality, Scene};
 use shading::{day_environment, night_environment, Environment};
 use skybox::Skybox;
-use structures::build_lighthouse_scene;
+use structures::{build_lighthouse_scene, SceneIslands};
 
 const MIN_WINDOW_W: u32 = 1280;
 const MIN_WINDOW_H: u32 = 720;
@@ -46,20 +46,26 @@ struct WorldData {
     lights: LightGrid,
     main_center: Vec3,
     main_radius: f32,
+    nether_center: Vec3,
+    end_center: Vec3,
     gen_ms: f64,
 }
 
 fn build_world_data(seed: u32) -> WorldData {
     let t0 = std::time::Instant::now();
-    let (islands, main_center, main_radius) = build_lighthouse_scene(seed);
+    let SceneIslands { islands, main_center, main_radius, nether_center, end_center } = build_lighthouse_scene(seed);
     let materials = material::build_material_table(seed);
     let lights = build_light_grid(&islands, &materials, 8.0);
     let gen_ms = t0.elapsed().as_secs_f64() * 1000.0;
-    WorldData { islands, materials, lights, main_center, main_radius, gen_ms }
+    WorldData { islands, materials, lights, main_center, main_radius, nether_center, end_center, gen_ms }
 }
 
+/// La distancia maxima de zoom tiene que alcanzar para que las 5 islas
+/// (principal, sus 2 satelites, Nether y End) entren en la vista general a
+/// la vez; la minima sigue centrada en la principal para poder acercarse a
+/// ver el detalle.
 fn build_camera(args: &Args, wd: &WorldData) -> Camera {
-    Camera::new(wd.main_center, args.yaw, args.pitch, args.dist, wd.main_radius * 0.6, wd.main_radius * 8.0, 50.0)
+    Camera::new(wd.main_center, args.yaw, args.pitch, args.dist, wd.main_radius * 0.6, wd.main_radius * 9.0, 50.0)
 }
 
 fn environment_for(night: bool) -> Environment {
@@ -116,6 +122,7 @@ struct FrameState {
     yaw_bits: u32,
     pitch_bits: u32,
     dist_bits: u32,
+    center_bits: (u32, u32, u32),
     night: bool,
     normalmaps: bool,
     quality: u8,
@@ -161,6 +168,10 @@ fn run_window_mode(args: &Args) {
     let mut quality: u8 = 2;
     let mut seed = args.seed;
     let mut auto_rotate = false;
+    // 0 = principal, 1 = Nether, 2 = End; teclas 4/5/6 la cambian y la camara
+    // se desliza suavemente (lerp) hacia el centro correspondiente en vez de
+    // saltar de golpe.
+    let mut cam_target_idx: u8 = 0;
 
     // El framebuffer principal siempre es 1:1 con la ventana: el pase quieto
     // renderiza directo ahi (nitido, sin escalado), el pase en movimiento
@@ -241,15 +252,40 @@ fn run_window_mode(args: &Args) {
         if rl.is_key_pressed(KeyboardKey::KEY_THREE) {
             quality = 3;
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_FOUR) {
+            cam_target_idx = 0;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_FIVE) {
+            cam_target_idx = 1;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_SIX) {
+            cam_target_idx = 2;
+        }
         if auto_rotate {
             cam.orbit(0.5 * dt, 0.0);
             moving = true;
+        }
+
+        // Desliza el centro de la orbita hacia la isla elegida (4/5/6) en vez
+        // de saltar de golpe; se recalcula el destino cada frame a partir de
+        // `wd` para que siga sirviendo aunque G haya regenerado las islas.
+        let cam_target = match cam_target_idx {
+            1 => wd.nether_center,
+            2 => wd.end_center,
+            _ => wd.main_center,
+        };
+        if (cam.center - cam_target).length() > 0.02 {
+            cam.center = cam.center.lerp(cam_target, (dt * 3.0).min(1.0));
+            moving = true;
+        } else {
+            cam.center = cam_target;
         }
 
         let state = FrameState {
             yaw_bits: cam.yaw.to_bits(),
             pitch_bits: cam.pitch.to_bits(),
             dist_bits: cam.dist.to_bits(),
+            center_bits: (cam.center.x.to_bits(), cam.center.y.to_bits(), cam.center.z.to_bits()),
             night,
             normalmaps,
             quality,

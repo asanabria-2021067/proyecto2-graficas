@@ -32,7 +32,8 @@ pub mod block {
     pub const END_CRYSTAL: u8 = 22;
     pub const END_ROD: u8 = 23;
     pub const CHORUS: u8 = 24;
-    pub const COUNT: usize = 25;
+    pub const END_STONE_BRICKS: u8 = 25;
+    pub const COUNT: usize = 26;
 }
 
 pub struct FaceTex {
@@ -282,6 +283,10 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     let mut purpur = Material::uniform_bumped("purpur", seed, MatParams { specular_coef: 0.25, specular_exp: 30.0, ..Default::default() });
     purpur.normal_strength = 0.9;
     entries[block::PURPUR as usize] = Some(purpur);
+
+    let mut end_stone_bricks = Material::uniform_bumped("end_stone_bricks", seed, MatParams { specular_coef: 0.1, specular_exp: 16.0, ..Default::default() });
+    end_stone_bricks.normal_strength = 1.0;
+    entries[block::END_STONE_BRICKS as usize] = Some(end_stone_bricks);
 
     // Cristal del End: emisivo (se registra como luz puntual), refractivo
     // (ior alto, como vidrio grueso) y muy reflectivo.

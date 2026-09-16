@@ -196,7 +196,7 @@ fn build_lake_and_waterfall(world: &mut World, hm: &Heightmap, cx: i32, cz: i32,
     // rebaja un anillo alrededor del lago en rampa suave, de la orilla
     // (agua_nivel+1) hasta la altura natural, para que sea un estanque
     // abierto y no un pozo.
-    let shore = 5;
+    let shore = 9;
     for dz in -(radius + shore)..=(radius + shore) {
         for dx in -(radius + shore)..=(radius + shore) {
             let dist = ((dx * dx + dz * dz) as f32).sqrt();
@@ -211,7 +211,11 @@ fn build_lake_and_waterfall(world: &mut World, hm: &Heightmap, cx: i32, cz: i32,
             }
             let t = ((dist - radius as f32) / shore as f32).clamp(0.0, 1.0);
             let eased = t * t;
-            let target = (water_level as f32 + 1.0 + eased * (top - water_level - 1) as f32).round() as i32;
+            // Jitter chico y determinista por columna para que el anillo no
+            // se lea como bandas concentricas perfectas (muy artificial
+            // visto desde arriba/al costado).
+            let jitter = ((x.wrapping_mul(374_761_393) ^ z.wrapping_mul(668_265_263)) as u32 % 3) as i32 - 1;
+            let target = (water_level as f32 + 1.0 + eased * (top - water_level - 1) as f32).round() as i32 + jitter;
             if target < top {
                 world.fill_box((x, target + 1, z), (x, top, z), block::AIR);
                 let shore_block = if t < 0.5 { block::SAND } else { block::GRASS };
@@ -553,51 +557,203 @@ fn build_floating_ring(world: &mut World, cx: i32, cz: i32, radius: f32, y: i32,
 /// de una pasarela continua con baranda, son bloques de end_stone salteados
 /// (huecos entre medio) a una altura que varia un poco de a uno, como
 /// piedras flotantes sueltas en vez de un puente solido.
-fn build_floating_path(islands: &mut Vec<Island>, idx_a: usize, hm_a: &Heightmap, pa: &IslandParams, idx_b: usize, hm_b: &Heightmap, pb: &IslandParams) {
-    let a_center_world = islands[idx_a].to_world_point(Vec3::new(pa.center_x as f32, pa.top_y as f32, pa.center_z as f32));
-    let b_center_world = islands[idx_b].to_world_point(Vec3::new(pb.center_x as f32, pb.top_y as f32, pb.center_z as f32));
-    let angle_deg = (b_center_world.z - a_center_world.z).atan2(b_center_world.x - a_center_world.x).to_degrees();
-
-    let edge_a = find_edge(hm_a, pa.center_x, pa.center_z, angle_deg.to_radians(), pa.radius + 200.0);
-    let edge_b = find_edge(hm_b, pb.center_x, pb.center_z, (angle_deg + 180.0).to_radians(), pb.radius + 200.0);
-    let edge_a_world = islands[idx_a].to_world_point(Vec3::new(edge_a.0 as f32, edge_a.2 as f32, edge_a.1 as f32));
-    let edge_b_world = islands[idx_b].to_world_point(Vec3::new(edge_b.0 as f32, edge_b.2 as f32, edge_b.1 as f32));
-
-    let margin = 4;
-    let min_x = edge_a_world.x.min(edge_b_world.x) as i32 - margin;
-    let max_x = edge_a_world.x.max(edge_b_world.x) as i32 + margin;
-    let min_z = edge_a_world.z.min(edge_b_world.z) as i32 - margin;
-    let max_z = edge_a_world.z.max(edge_b_world.z) as i32 + margin;
-    let min_y = edge_a_world.y.min(edge_b_world.y) as i32 - 6;
-    let path_offset = (min_x, min_y, min_z);
-    let mut path_island = Island::new(World::new((max_x - min_x).max(4), 20, (max_z - min_z).max(4)), path_offset);
-
-    let local_a = path_island.to_local_point(edge_a_world);
-    let local_b = path_island.to_local_point(edge_b_world);
-    let steps = (local_b.x - local_a.x).abs().max((local_b.z - local_a.z).abs()).max(1.0) as i32;
-    let mut rng = Pcg32::new((min_x as u64) ^ 0xE0D5_7EFF, 0x1D);
-    for i in 0..=steps {
-        if i % 2 == 1 {
-            continue; // salteado: bloques flotantes, no una pasarela continua
-        }
-        let t = i as f32 / steps as f32;
-        let x = (local_a.x + (local_b.x - local_a.x) * t).round() as i32;
-        let z = (local_a.z + (local_b.z - local_a.z) * t).round() as i32;
-        let y = (local_a.y + (local_b.y - local_a.y) * t).round() as i32 + rng.range_i32(-1, 1);
-        path_island.world.set(x, y, z, block::END_STONE);
-    }
-
-    islands.push(path_island);
+/// Parametros de un estilo de puente: que materiales usa y si el tablero
+/// sube en el medio (arco, puentes "de piedra") o cuelga (catenaria,
+/// puentes colgantes).
+pub struct BridgeStyle {
+    pub deck_id: u8,
+    pub rail_id: u8,
+    pub support_id: u8,
+    pub lamp_id: u8,
+    pub arch: bool,
+    pub curve_amount: f32,
 }
 
-/// Construye un puente entre dos islas COMO SU PROPIA MINI-GRILLA (`Island`
-/// nueva, empujada a `islands`): encuentra el borde real de cada isla en
-/// direccion a la otra (`find_edge`, funciona con cualquier semilla), nivela
-/// un parche chico en cada isla para que la transicion no tenga escalon, y
-/// tiende una pasarela dentro de la grilla nueva que solo cubre el hueco
-/// entre ambas (mas un margen), no toda la distancia entre sus centros.
+/// Cuanto puede llegar a medir un solo tramo antes de que `build_bridge`
+/// meta una mini-isla de descanso en el medio (de a una por cada tramo que
+/// siga siendo demasiado largo, hasta 2).
+const BRIDGE_MAX_SPAN: f32 = 40.0;
+
+/// Isla de descanso chica y plana (disco de end_stone) para partir un
+/// puente demasiado largo en varios tramos mas cortos.
+fn build_rest_island(islands: &mut Vec<Island>, center_world: Vec3, r: i32) -> Vec3 {
+    let half = r + 2;
+    let size = half * 2 + 1;
+    let mut world = World::new(size, 6, size);
+    for dz in -r..=r {
+        for dx in -r..=r {
+            if dx * dx + dz * dz > r * r {
+                continue;
+            }
+            world.fill_box((half + dx, 0, half + dz), (half + dx, 2, half + dz), block::END_STONE_BRICKS);
+            world.set(half + dx, 3, half + dz, block::END_STONE);
+        }
+    }
+    let offset = (center_world.x.round() as i32 - half, center_world.y.round() as i32 - 3, center_world.z.round() as i32 - half);
+    islands.push(Island::new(world, offset));
+    Vec3::new(center_world.x.round(), center_world.y.round(), center_world.z.round())
+}
+
+/// Un solo tramo de puente entre dos puntos de MUNDO ya conocidos, como su
+/// propia mini-grilla: tablero de 3 de ancho que sigue una curva (catenaria
+/// o arco segun `style`), pasamanos continuo a los dos lados con postes
+/// cada 3 pasos, linternas emisivas cada 6, y subestructura visible debajo
+/// (vigas cruzadas + cuerdas colgando de pilares altos para los colgantes;
+/// arcos de soporte + una estalactita en el punto mas alto para los de
+/// piedra) -- para que se lea como un puente real desde lejos, no una
+/// linea de bloques sueltos.
+fn build_bridge_span(islands: &mut Vec<Island>, a: Vec3, b: Vec3, style: &BridgeStyle) {
+    let dx = b.x - a.x;
+    let dz = b.z - a.z;
+    let horiz_len = (dx * dx + dz * dz).sqrt().max(1.0);
+    let steps = horiz_len.round().max(1.0) as i32;
+    let (perp_x, perp_z) = (-dz / horiz_len, dx / horiz_len);
+
+    let margin = 5;
+    let min_x = a.x.min(b.x) as i32 - margin;
+    let max_x = a.x.max(b.x) as i32 + margin;
+    let min_z = a.z.min(b.z) as i32 - margin;
+    let max_z = a.z.max(b.z) as i32 + margin;
+    let extra_up = if style.arch { style.curve_amount } else { 9.0 };
+    let min_y = (a.y.min(b.y) - style.curve_amount - 7.0) as i32;
+    let max_y = (a.y.max(b.y) + extra_up + 2.0) as i32;
+    let offset = (min_x, min_y, min_z);
+    let mut span = Island::new(World::new((max_x - min_x).max(4), (max_y - min_y).max(16), (max_z - min_z).max(4)), offset);
+
+    let local_a = span.to_local_point(a);
+    let local_b = span.to_local_point(b);
+
+    // Pilares altos en cada extremo, de donde "cuelgan" las cuerdas del
+    // puente colgante -- no hace falta para el de arco (su soporte va
+    // debajo del tablero, no arriba).
+    if !style.arch {
+        for &sign in &[-1.0f32, 1.0] {
+            for (lx, lz, ly) in [(local_a.x, local_a.z, local_a.y), (local_b.x, local_b.z, local_b.y)] {
+                let px = (lx + perp_x * 1.5 * sign).round() as i32;
+                let pz = (lz + perp_z * 1.5 * sign).round() as i32;
+                place_pillar(&mut span.world, px, pz, ly.round() as i32 + 1, ly.round() as i32 + 8, style.rail_id);
+            }
+        }
+    }
+
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let cx = local_a.x + (local_b.x - local_a.x) * t;
+        let cz = local_a.z + (local_b.z - local_a.z) * t;
+        let base_deck_y = local_a.y + (local_b.y - local_a.y) * t;
+        let shape = 4.0 * t * (1.0 - t); // 0 en los extremos, 1 en el medio
+        let deck_y = if style.arch { (base_deck_y + style.curve_amount * shape).round() as i32 } else { (base_deck_y - style.curve_amount * shape).round() as i32 };
+
+        for w in -1..=1 {
+            let wx = (cx + perp_x * w as f32).round() as i32;
+            let wz = (cz + perp_z * w as f32).round() as i32;
+            span.world.set(wx, deck_y, wz, style.deck_id);
+        }
+
+        // Pasamanos continuo a ambos lados (se nota como puente desde
+        // lejos, no como una fila de bloques sueltos), con postes mas
+        // altos cada 3 pasos para que no quede parejo/monotono.
+        for sign in [-1.0f32, 1.0] {
+            let rx = (cx + perp_x * 1.5 * sign).round() as i32;
+            let rz = (cz + perp_z * 1.5 * sign).round() as i32;
+            if i % 3 == 0 {
+                span.world.fill_box((rx, deck_y + 1, rz), (rx, deck_y + 3, rz), style.rail_id);
+            } else {
+                span.world.set(rx, deck_y + 1, rz, style.rail_id);
+            }
+        }
+
+        // Linternas emisivas cada 6 pasos, alternando de lado.
+        if i % 6 == 3 {
+            let sign = if (i / 6) % 2 == 0 { 1.0 } else { -1.0 };
+            let lx = (cx + perp_x * 1.5 * sign).round() as i32;
+            let lz = (cz + perp_z * 1.5 * sign).round() as i32;
+            span.world.set(lx, deck_y + 3, lz, style.lamp_id);
+        }
+
+        if style.arch {
+            // Arcos de soporte cada 5 pasos (no en las puntas): dos
+            // pilares bajando desde el tablero con un dintel que los une.
+            if i % 5 == 0 && t > 0.12 && t < 0.88 {
+                let drop = 3;
+                for sign in [-1.0f32, 1.0] {
+                    let rx = (cx + perp_x * 1.3 * sign).round() as i32;
+                    let rz = (cz + perp_z * 1.3 * sign).round() as i32;
+                    span.world.fill_box((rx, deck_y - drop, rz), (rx, deck_y - 1, rz), style.support_id);
+                }
+                for w in -1..=1 {
+                    let wx = (cx + perp_x * w as f32).round() as i32;
+                    let wz = (cz + perp_z * w as f32).round() as i32;
+                    span.world.set(wx, deck_y - drop, wz, style.support_id);
+                }
+            }
+            // Estalactita en el punto mas alto del arco.
+            if i == steps / 2 {
+                let sx = cx.round() as i32;
+                let sz = cz.round() as i32;
+                place_pillar(&mut span.world, sx, sz, deck_y - 6, deck_y - 1, style.support_id);
+                span.world.set(sx, deck_y - 7, sz, style.support_id);
+            }
+        } else {
+            // Vigas cruzadas cada 4 pasos, debajo del tablero.
+            if i % 4 == 0 {
+                for w in -1..=1 {
+                    let wx = (cx + perp_x * w as f32).round() as i32;
+                    let wz = (cz + perp_z * w as f32).round() as i32;
+                    span.world.set(wx, deck_y - 1, wz, style.support_id);
+                }
+            }
+            // Cuerdas: cuelgan de un cable principal recto entre las
+            // puntas de los dos pilares hasta el pasamanos del tablero.
+            if i % 2 == 0 {
+                let pillar_top_a = local_a.y.round() + 8.0;
+                let pillar_top_b = local_b.y.round() + 8.0;
+                let cable_y = (pillar_top_a + (pillar_top_b - pillar_top_a) * t) as i32;
+                let rail_y = deck_y + 1;
+                if cable_y > rail_y {
+                    for sign in [-1.0f32, 1.0] {
+                        let rx = (cx + perp_x * 1.5 * sign).round() as i32;
+                        let rz = (cz + perp_z * 1.5 * sign).round() as i32;
+                        span.world.fill_box((rx, rail_y, rz), (rx, cable_y, rz), style.support_id);
+                    }
+                }
+            }
+        }
+    }
+
+    islands.push(span);
+}
+
+/// Arma la ruta completa entre dos puntos de mundo: si la distancia supera
+/// `BRIDGE_MAX_SPAN`, mete 1 o 2 mini-islas de descanso (`build_rest_island`)
+/// repartidas en el medio y encadena un tramo (`build_bridge_span`) entre
+/// cada punto consecutivo, en vez de un solo tramo gigante.
+fn build_bridge_route(islands: &mut Vec<Island>, a: Vec3, b: Vec3, style: &BridgeStyle) {
+    let dist = ((b.x - a.x).powi(2) + (b.z - a.z).powi(2)).sqrt();
+    if dist <= BRIDGE_MAX_SPAN {
+        build_bridge_span(islands, a, b, style);
+        return;
+    }
+    let rests = if dist > BRIDGE_MAX_SPAN * 2.0 { 2 } else { 1 };
+    let mut points = vec![a];
+    for k in 1..=rests {
+        let t = k as f32 / (rests as f32 + 1.0);
+        let mid = Vec3::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
+        points.push(build_rest_island(islands, mid, 5));
+    }
+    points.push(b);
+    for pair in points.windows(2) {
+        build_bridge_span(islands, pair[0], pair[1], style);
+    }
+}
+
+/// Construye un puente entre dos islas: encuentra el borde real de cada una
+/// en direccion a la otra (`find_edge`, funciona con cualquier semilla),
+/// nivela y refuerza un estribo en cada punta (parche aplanado con el
+/// material del tablero), y arma la ruta (`build_bridge_route`, con
+/// mini-islas de descanso si el hueco es muy grande) en el estilo pedido.
 #[allow(clippy::too_many_arguments)]
-fn build_bridge(islands: &mut Vec<Island>, idx_a: usize, hm_a: &Heightmap, pa: &IslandParams, idx_b: usize, hm_b: &Heightmap, pb: &IslandParams, min_world_y: i32, deck_id: u8, post_id: u8) {
+fn build_bridge(islands: &mut Vec<Island>, idx_a: usize, hm_a: &Heightmap, pa: &IslandParams, idx_b: usize, hm_b: &Heightmap, pb: &IslandParams, min_world_y: i32, style: &BridgeStyle) {
     let a_center_world = islands[idx_a].to_world_point(Vec3::new(pa.center_x as f32, pa.top_y as f32, pa.center_z as f32));
     let b_center_world = islands[idx_b].to_world_point(Vec3::new(pb.center_x as f32, pb.top_y as f32, pb.center_z as f32));
     let angle_deg = (b_center_world.z - a_center_world.z).atan2(b_center_world.x - a_center_world.x).to_degrees();
@@ -609,29 +765,18 @@ fn build_bridge(islands: &mut Vec<Island>, idx_a: usize, hm_a: &Heightmap, pa: &
     let edge_b_world = islands[idx_b].to_world_point(Vec3::new(edge_b.0 as f32, edge_b.2 as f32, edge_b.1 as f32));
     let bridge_y_world = (((edge_a_world.y + edge_b_world.y) * 0.5).round() as i32).max(min_world_y);
 
-    // Nivela un parche en cada isla (en SUS coordenadas locales) para que la
-    // transicion al puente no tenga un escalon.
+    // Estribos: aplana y refuerza un parche de 5x5 en cada isla (en SUS
+    // coordenadas locales) para que la transicion al puente no tenga
+    // escalon y se lea como un anclaje real, no un tablero que arranca de
+    // la nada.
     let local_y_a = bridge_y_world - islands[idx_a].offset.1;
-    flatten_area(&mut islands[idx_a].world, edge_a.0 - 1, edge_a.1 - 1, edge_a.0 + 1, edge_a.1 + 1, local_y_a, deck_id);
+    flatten_area(&mut islands[idx_a].world, edge_a.0 - 2, edge_a.1 - 2, edge_a.0 + 2, edge_a.1 + 2, local_y_a, style.deck_id);
     let local_y_b = bridge_y_world - islands[idx_b].offset.1;
-    flatten_area(&mut islands[idx_b].world, edge_b.0 - 1, edge_b.1 - 1, edge_b.0 + 1, edge_b.1 + 1, local_y_b, deck_id);
+    flatten_area(&mut islands[idx_b].world, edge_b.0 - 2, edge_b.1 - 2, edge_b.0 + 2, edge_b.1 + 2, local_y_b, style.deck_id);
 
-    // Grilla propia del puente: solo el hueco entre las dos islas, mas margen.
-    let margin = 4;
-    let min_x = edge_a_world.x.min(edge_b_world.x) as i32 - margin;
-    let max_x = edge_a_world.x.max(edge_b_world.x) as i32 + margin;
-    let min_z = edge_a_world.z.min(edge_b_world.z) as i32 - margin;
-    let max_z = edge_a_world.z.max(edge_b_world.z) as i32 + margin;
-    let min_y = bridge_y_world - 6;
-    let bridge_offset = (min_x, min_y, min_z);
-    let mut bridge_island = Island::new(World::new((max_x - min_x).max(4), 16, (max_z - min_z).max(4)), bridge_offset);
-
-    let local_a = bridge_island.to_local_point(edge_a_world);
-    let local_b = bridge_island.to_local_point(edge_b_world);
-    let by = bridge_y_world - min_y;
-    build_walkway(&mut bridge_island.world, local_a.x.round() as i32, local_a.z.round() as i32, by, local_b.x.round() as i32, local_b.z.round() as i32, by, 2, deck_id, post_id);
-
-    islands.push(bridge_island);
+    let a_anchor = Vec3::new(edge_a_world.x, bridge_y_world as f32, edge_a_world.z);
+    let b_anchor = Vec3::new(edge_b_world.x, bridge_y_world as f32, edge_b_world.z);
+    build_bridge_route(islands, a_anchor, b_anchor, style);
 }
 
 /// Todo lo que hace falta saber de una isla ya construida para seguir
@@ -713,7 +858,8 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     let sat_a = spawn_island(&mut islands, seed.wrapping_add(101), params_a, offset_a);
     clear_trees_near(&mut islands[sat_a.index].world, sat_a.params.center_x, sat_a.params.center_z, 4);
     build_statue(&mut islands[sat_a.index].world, &sat_a.heightmap, sat_a.params.center_x, sat_a.params.center_z);
-    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_a.index, &sat_a.heightmap, &sat_a.params, water_level_world + 2, block::OAK_PLANKS, block::OAK_LOG);
+    let wood_bridge = BridgeStyle { deck_id: block::OAK_PLANKS, rail_id: block::OAK_LOG, support_id: block::OAK_LOG, lamp_id: block::GLOWSTONE, arch: false, curve_amount: 3.0 };
+    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_a.index, &sat_a.heightmap, &sat_a.params, water_level_world + 2, &wood_bridge);
 
     // Isla satelite B: jardin con fuente.
     let b_offset_xz = (main_center_world.x + (70f32.to_radians().cos() * (r + sat_gap + sat_r)), main_center_world.z + (70f32.to_radians().sin() * (r + sat_gap + sat_r)));
@@ -722,7 +868,7 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     let sat_b = spawn_island(&mut islands, seed.wrapping_add(202), params_b, offset_b);
     clear_trees_near(&mut islands[sat_b.index].world, sat_b.params.center_x, sat_b.params.center_z, 7);
     build_garden(&mut islands[sat_b.index].world, &sat_b.heightmap, sat_b.params.center_x, sat_b.params.center_z, seed);
-    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_b.index, &sat_b.heightmap, &sat_b.params, water_level_world + 2, block::OAK_PLANKS, block::OAK_LOG);
+    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_b.index, &sat_b.heightmap, &sat_b.params, water_level_world + 2, &wood_bridge);
 
     // Isla del Nether: a un costado y mas abajo que la principal (offset.y
     // negativo), perfil de ruido "ridged" (generate_rugged_island) en vez
@@ -754,7 +900,8 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
 
     hang_glowstone_edge(&mut islands[nether.index].world, &nether.heightmap, ncx, ncz, nr, 8, seed.wrapping_add(303));
 
-    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, nether.index, &nether.heightmap, &nether.params, offset_n.1 + 4, block::NETHER_BRICKS, block::OBSIDIAN);
+    let nether_bridge = BridgeStyle { deck_id: block::NETHER_BRICKS, rail_id: block::OBSIDIAN, support_id: block::NETHER_BRICKS, lamp_id: block::GLOWSTONE, arch: true, curve_amount: 2.5 };
+    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, nether.index, &nether.heightmap, &nether.params, offset_n.1 + 4, &nether_bridge);
     let nether_center_world = island_world_center(&islands, &nether);
 
     // Isla del End: al otro costado, mas alta y mas lejos que la principal
@@ -784,7 +931,8 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     scatter_chorus(&mut islands[end_island.index].world, &end_island.heightmap, ecx, ecz, er * 0.85, seed.wrapping_add(404));
     build_floating_ring(&mut islands[end_island.index].world, ecx, ecz, er, end_island.params.top_y, seed.wrapping_add(404));
 
-    build_floating_path(&mut islands, main.index, &main.heightmap, &main.params, end_island.index, &end_island.heightmap, &end_island.params);
+    let end_bridge = BridgeStyle { deck_id: block::END_STONE_BRICKS, rail_id: block::PURPUR, support_id: block::PURPUR, lamp_id: block::END_ROD, arch: true, curve_amount: 2.5 };
+    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, end_island.index, &end_island.heightmap, &end_island.params, offset_e.1 - 2, &end_bridge);
     let end_center_world = island_world_center(&islands, &end_island);
 
     SceneIslands { islands, main_center: main_center_world, main_radius: r, nether_center: nether_center_world, end_center: end_center_world }

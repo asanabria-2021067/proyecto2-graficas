@@ -567,6 +567,171 @@ fn chorus(seed: u32) -> Vec<u8> {
     buf
 }
 
+fn crimson_stem(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let streak = ((x as f32 * 1.9).sin() * 0.5 + 0.5) * 0.3;
+            let r = vary(150, 14, n) as f32 - streak * 30.0;
+            let g = vary(35, 10, n) as f32 - streak * 10.0;
+            let b = vary(90, 14, n) as f32 - streak * 20.0;
+            put(&mut buf, x, y, [r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255]);
+        }
+    }
+    buf
+}
+
+fn warped_stem(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let streak = ((x as f32 * 1.9).sin() * 0.5 + 0.5) * 0.3;
+            let r = vary(25, 8, n) as f32 - streak * 8.0;
+            let g = vary(110, 14, n) as f32 - streak * 20.0;
+            let b = vary(120, 14, n) as f32 - streak * 22.0;
+            put(&mut buf, x, y, [r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255]);
+        }
+    }
+    buf
+}
+
+fn nether_wart_block(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let bump = rand01(seed ^ 0x1FA5, x / 2, y / 2) > 0.5;
+            let base = if bump { 165 } else { 128 };
+            put(&mut buf, x, y, [vary(base, 14, n), vary(20, 8, n), vary(30, 8, n), 255]);
+        }
+    }
+    buf
+}
+
+fn warped_wart_block(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let bump = rand01(seed ^ 0x1FA6, x / 2, y / 2) > 0.5;
+            let base = if bump { 40 } else { 20 };
+            put(&mut buf, x, y, [vary(base, 8, n), vary(base + 90, 14, n), vary(base + 95, 14, n), 255]);
+        }
+    }
+    buf
+}
+
+fn shroomlight(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let blotch = rand01(seed ^ 0x5117, x / 3, y / 3) > 0.4;
+            if blotch {
+                put(&mut buf, x, y, [vary(255, 6, n), vary(170, 12, n), vary(90, 14, n), 255]);
+            } else {
+                put(&mut buf, x, y, [vary(235, 8, n), vary(130, 12, n), vary(55, 10, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn crimson_nylium(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            put(&mut buf, x, y, [vary(150, 18, n), vary(30, 10, n), vary(55, 12, n), 255]);
+        }
+    }
+    buf
+}
+
+fn warped_nylium(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            put(&mut buf, x, y, [vary(20, 8, n), vary(120, 16, n), vary(115, 16, n), 255]);
+        }
+    }
+    buf
+}
+
+fn blackstone(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let fleck = rand01(seed ^ 0x2CA1, x, y) > 0.85;
+            let base = if fleck { 55 } else { 28 };
+            put(&mut buf, x, y, [vary(base, 8, n), vary(base - 4, 6, n), vary(base - 2, 8, n), 255]);
+        }
+    }
+    buf
+}
+
+#[inline]
+fn flame_shape(seed: u32, x: u32, y: u32) -> bool {
+    let cx = 8.0f32;
+    let width = (7.0 - y as f32 * 0.35).max(1.5);
+    let flicker = (rand01(seed ^ 0x0F1A, x, y / 2) - 0.5) * 2.5;
+    (x as f32 - cx + flicker).abs() < width * 0.5
+}
+
+fn fire(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            if flame_shape(seed, x, y) {
+                let n = rand01(seed, x, y);
+                let t = y as f32 / SIZE as f32;
+                let r = vary(255, 6, n);
+                let g = (vary(160, 20, n) as f32 * (1.0 - t * 0.4)) as u8;
+                let b = (vary(30, 10, n) as f32 * (1.0 - t)) as u8;
+                put(&mut buf, x, y, [r, g, b, 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn soul_fire(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            if flame_shape(seed ^ 0x50FF, x, y) {
+                let n = rand01(seed, x, y);
+                let t = y as f32 / SIZE as f32;
+                let r = (vary(80, 14, n) as f32 * (1.0 - t * 0.5)) as u8;
+                let g = vary(210, 16, n);
+                let b = vary(255, 6, n);
+                put(&mut buf, x, y, [r, g, b, 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn soul_sand(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let dot = rand01(seed ^ 0x50DA, x, y) > 0.85;
+            if dot {
+                put(&mut buf, x, y, [vary(60, 10, n), vary(48, 8, n), vary(58, 10, n), 255]);
+            } else {
+                put(&mut buf, x, y, [vary(88, 10, n), vary(70, 8, n), vary(78, 10, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
 /// Generates a 16x16 RGBA8 texture by name. Unknown names fall back to a
 /// magenta/black checker so a typo is obvious instead of silently blank.
 pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
@@ -596,6 +761,17 @@ pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
         "basalt" => basalt(seed),
         "end_stone" => end_stone(seed),
         "end_stone_bricks" => end_stone_bricks(seed),
+        "crimson_stem" => crimson_stem(seed),
+        "warped_stem" => warped_stem(seed),
+        "nether_wart_block" => nether_wart_block(seed),
+        "warped_wart_block" => warped_wart_block(seed),
+        "shroomlight" => shroomlight(seed),
+        "crimson_nylium" => crimson_nylium(seed),
+        "warped_nylium" => warped_nylium(seed),
+        "blackstone" => blackstone(seed),
+        "fire" => fire(seed),
+        "soul_fire" => soul_fire(seed),
+        "soul_sand" => soul_sand(seed),
         "purpur" => purpur(seed),
         "end_crystal" => end_crystal(seed),
         "end_rod" => end_rod(seed),

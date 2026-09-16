@@ -166,7 +166,10 @@ pub fn generate_rugged_island(seed: u32, p: &IslandParams) -> (World, Heightmap)
             let bottom_y = (p.top_y as f32 - cone - (jag * 0.5 + 0.5) * 6.0).round() as i32;
             let bottom_y = bottom_y.max(1);
 
-            let crack = perlin.noise3(x as f32 * 0.15, z as f32 * 0.15, 3.3) > 0.6;
+            // El magma se concentra hacia el borde (grietas que se ven
+            // "al filo" de la isla), casi no aparece cerca del centro.
+            let crack_threshold = 0.68 - dist_norm * 0.42;
+            let crack = perlin.noise3(x as f32 * 0.15, z as f32 * 0.15, 3.3) > crack_threshold;
             let top_block = if crack { block::MAGMA } else { block::NETHERRACK };
 
             world.fill_box((x, bottom_y, z), (x, (surface_y - 1).max(bottom_y), z), block::NETHERRACK);

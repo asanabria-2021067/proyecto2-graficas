@@ -4,6 +4,7 @@ use crate::material::{Material, MaterialTable};
 use crate::math::{Ray, Vec3};
 use crate::render::Tracer;
 use crate::shading::{aces_tonemap, beer_lambert, face_tex, is_visible, perturb_normal, shade_surface, Environment};
+use crate::skybox::Skybox;
 use crate::world::World;
 
 const EPS: f32 = 1e-3;
@@ -26,6 +27,7 @@ pub struct Scene<'a> {
     pub world: &'a World,
     pub materials: &'a MaterialTable,
     pub lights: &'a LightGrid,
+    pub skybox: &'a Skybox,
     pub env: Environment,
     pub night: bool,
     pub max_depth: u32,
@@ -40,7 +42,7 @@ impl Tracer for Scene<'_> {
 
 impl Scene<'_> {
     fn sky(&self, dir: Vec3) -> Vec3 {
-        crate::sky_color(dir, self.night)
+        self.skybox.sample(dir, self.night)
     }
 
     /// `current_medium` is the block id of the transparent volume the ray

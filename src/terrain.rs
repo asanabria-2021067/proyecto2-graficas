@@ -30,6 +30,17 @@ impl Heightmap {
             None
         }
     }
+
+    /// Copies over the columns `other` marks as part of an island, so a
+    /// scene with several islands can keep one combined heightmap.
+    pub fn merge(&mut self, other: &Heightmap) {
+        for i in 0..self.on_island.len() {
+            if other.on_island[i] {
+                self.on_island[i] = true;
+                self.top[i] = other.top[i];
+            }
+        }
+    }
 }
 
 pub struct IslandParams {
@@ -43,16 +54,15 @@ pub struct IslandParams {
 }
 
 impl IslandParams {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(center_x: i32, center_z: i32, radius: f32, top_y: i32, water_level: i32, max_depth: f32, tree_count: u32) -> Self {
+        IslandParams { center_x, center_z, radius, top_y, water_level, max_depth, tree_count }
+    }
+
     pub fn main_island(world: &World) -> Self {
-        IslandParams {
-            center_x: world.nx / 2,
-            center_z: world.nz / 2,
-            radius: (world.nx.min(world.nz) as f32) * 0.42,
-            top_y: (world.ny as f32 * 0.60) as i32,
-            water_level: (world.ny as f32 * 0.46) as i32,
-            max_depth: world.ny as f32 * 0.4,
-            tree_count: 24,
-        }
+        let top_y = (world.ny as f32 * 0.60) as i32;
+        let water_level = (world.ny as f32 * 0.46) as i32;
+        IslandParams::new(world.nx / 2, world.nz / 2, (world.nx.min(world.nz) as f32) * 0.26, top_y, water_level, world.ny as f32 * 0.4, 24)
     }
 }
 

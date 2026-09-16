@@ -16,9 +16,9 @@ impl Default for Args {
         Args {
             render: None,
             bench: false,
-            yaw: 35.0,
+            yaw: 235.0,
             pitch: 25.0,
-            dist: 60.0,
+            dist: 110.0,
             width: 960,
             height: 540,
             night: false,

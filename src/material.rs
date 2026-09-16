@@ -44,7 +44,10 @@ pub mod block {
     pub const FIRE: u8 = 34;
     pub const SOUL_FIRE: u8 = 35;
     pub const SOUL_SAND: u8 = 36;
-    pub const COUNT: usize = 37;
+    pub const PURPUR_PILLAR: u8 = 37;
+    pub const CHORUS_PLANT: u8 = 38;
+    pub const MAGENTA_GLASS: u8 = 39;
+    pub const COUNT: usize = 40;
 }
 
 pub struct FaceTex {
@@ -367,6 +370,21 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     let mut chorus = Material::uniform("chorus", seed, MatParams { specular_coef: 0.05, specular_exp: 6.0, ..Default::default() });
     chorus.alpha_cutout = true;
     entries[block::CHORUS as usize] = Some(chorus);
+
+    // Purpur pillar: variante en columna del purpur, para las torres.
+    let mut purpur_pillar = Material::uniform_bumped("purpur_pillar", seed, MatParams { specular_coef: 0.28, specular_exp: 32.0, ..Default::default() });
+    purpur_pillar.normal_strength = 0.9;
+    entries[block::PURPUR_PILLAR as usize] = Some(purpur_pillar);
+
+    // Tallo de planta chorus: morado oscuro solido, no cutout (a diferencia
+    // de la flor `chorus`, que si lo es).
+    entries[block::CHORUS_PLANT as usize] = Some(Material::uniform("chorus_plant", seed, MatParams { specular_coef: 0.04, specular_exp: 6.0, ..Default::default() }));
+
+    // Vidrio morado para las ventanas de la ciudad: refractivo como el
+    // vidrio comun pero con tinte magenta.
+    let mut magenta_glass = Material::uniform("magenta_glass", seed, MatParams { specular_coef: 0.6, specular_exp: 120.0, transparency: 0.85, reflectivity: 0.08, ior: 1.5, ..Default::default() });
+    magenta_glass.tint = Vec3::new(1.0, 0.55, 0.95);
+    entries[block::MAGENTA_GLASS as usize] = Some(magenta_glass);
 
     MaterialTable { entries }
 }

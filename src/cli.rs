@@ -1,6 +1,7 @@
 pub struct Args {
     pub render: Option<String>,
     pub bench: bool,
+    pub bench_aa: bool,
     pub yaw: f32,
     pub pitch: f32,
     pub dist: f32,
@@ -16,6 +17,7 @@ impl Default for Args {
         Args {
             render: None,
             bench: false,
+            bench_aa: false,
             yaw: 235.0,
             pitch: 25.0,
             dist: 110.0,
@@ -40,6 +42,7 @@ pub fn parse(raw: &[String]) -> Args {
         match flag {
             "--render" => args.render = Some(next()),
             "--bench" => args.bench = true,
+            "--bench-aa" => args.bench_aa = true,
             "--yaw" => args.yaw = next().parse().unwrap_or(args.yaw),
             "--pitch" => args.pitch = next().parse().unwrap_or(args.pitch),
             "--dist" => args.dist = next().parse().unwrap_or(args.dist),

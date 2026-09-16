@@ -202,9 +202,14 @@ fn water(seed: u32) -> Vec<u8> {
         for x in 0..SIZE {
             let wave = ((x as f32 * 0.9 + y as f32 * 0.5).sin() * 0.5 + (y as f32 * 0.7).cos() * 0.5) * 0.5 + 0.5;
             let n = rand01(seed, x, y);
-            let r = vary(28, 6, n) as f32;
-            let g = (vary(94, 10, n) as f32) + wave * 24.0;
-            let b = (vary(158, 12, n) as f32) + wave * 30.0;
+            // Base mucho mas clara que antes (28,94,158): con la ambient del
+            // dia tan baja, un albedo tan oscuro hacia que el lago se leyera
+            // como un hueco gris-negro incluso con la reflexion/refraccion
+            // funcionando bien -- un turquesa mas luminoso se ve como agua
+            // real tanto a la sombra como al sol.
+            let r = vary(60, 8, n) as f32;
+            let g = (vary(150, 12, n) as f32) + wave * 24.0;
+            let b = (vary(195, 12, n) as f32) + wave * 24.0;
             put(&mut buf, x, y, [r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 178]);
         }
     }

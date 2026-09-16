@@ -173,14 +173,50 @@ fn build_lake_and_waterfall(world: &mut World, hm: &Heightmap, cx: i32, cz: i32,
             if top > water_level {
                 world.fill_box((x, water_level + 1, z), (x, top, z), block::AIR);
             }
-            // Fondo en forma de cuenco: mas hondo en el centro (hasta 3
-            // bloques), se va achicando hacia la orilla, para que el lago se
-            // lea como un cuerpo de agua real y no un charco de un bloque.
+            // Fondo en forma de cuenco: mas hondo en el centro, se va
+            // achicando hacia la orilla, para que el lago se lea como un
+            // cuerpo de agua real y no un charco de un bloque. Profundidad
+            // maxima de 2 (antes 3): con mas de 2 bloques de agua encima la
+            // absorcion Beer-Lambert oscurecia el fondo entero incluso ya
+            // con el material mas claro, y la orilla quedaba angosta.
             let dist_norm = (dist2 as f32).sqrt() / radius as f32;
-            let bowl_depth = ((1.0 - dist_norm) * 3.0) as i32;
+            let bowl_depth = ((1.0 - dist_norm) * 2.0) as i32;
             let bed_y = (water_level - 1 - bowl_depth).min(top);
             world.set(x, bed_y, z, block::SAND);
             world.fill_box((x, bed_y + 1, z), (x, water_level, z), block::WATER);
+        }
+    }
+
+    // Orilla en rampa: el radio del lago solo despeja el POZO en si (hasta
+    // `water_level`), pero el terreno natural justo afuera de ese radio
+    // puede estar varios bloques mas alto (el heightmap de la isla no sabe
+    // que ahi va un lago) -- eso dejaba un pozo de paredes casi verticales
+    // de 6-15 bloques, que con el sol tan bajo (~12 grados) se auto-sombrea
+    // por completo sin importar que tan claro sea el material del agua. Se
+    // rebaja un anillo alrededor del lago en rampa suave, de la orilla
+    // (agua_nivel+1) hasta la altura natural, para que sea un estanque
+    // abierto y no un pozo.
+    let shore = 5;
+    for dz in -(radius + shore)..=(radius + shore) {
+        for dx in -(radius + shore)..=(radius + shore) {
+            let dist = ((dx * dx + dz * dz) as f32).sqrt();
+            if dist <= radius as f32 || dist > (radius + shore) as f32 {
+                continue;
+            }
+            let x = cx + dx;
+            let z = cz + dz;
+            let Some(top) = hm.top_at(x, z) else { continue };
+            if top <= water_level + 1 {
+                continue;
+            }
+            let t = ((dist - radius as f32) / shore as f32).clamp(0.0, 1.0);
+            let eased = t * t;
+            let target = (water_level as f32 + 1.0 + eased * (top - water_level - 1) as f32).round() as i32;
+            if target < top {
+                world.fill_box((x, target + 1, z), (x, top, z), block::AIR);
+                let shore_block = if t < 0.5 { block::SAND } else { block::GRASS };
+                world.set(x, target, z, shore_block);
+            }
         }
     }
 
@@ -650,6 +686,12 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
 
     let (kx, kz) = polar(cx, cz, 40.0, r * 0.32);
     let lake_r = (r * 0.30) as i32;
+    // Sin esto, los arboles plantados por generate_island (anteriores a
+    // cualquier estructura) podian quedar justo encima/al borde del lago,
+    // con la copa colgando sobre el agua: la sombreaba casi por completo y
+    // encima la tapaba visualmente. Limpiar antes de excavarlo, igual que
+    // ya se hacia para el faro y la casita.
+    clear_trees_near(&mut islands[main.index].world, kx, kz, lake_r + 4);
     build_lake_and_waterfall(&mut islands[main.index].world, &main.heightmap, kx, kz, lake_r, main.params.water_level, 40.0);
     build_dock(&mut islands[main.index].world, &main.heightmap, kx, kz, lake_r, 220.0, main.params.water_level);
 

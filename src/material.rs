@@ -33,7 +33,18 @@ pub mod block {
     pub const END_ROD: u8 = 23;
     pub const CHORUS: u8 = 24;
     pub const END_STONE_BRICKS: u8 = 25;
-    pub const COUNT: usize = 26;
+    pub const CRIMSON_STEM: u8 = 26;
+    pub const WARPED_STEM: u8 = 27;
+    pub const NETHER_WART_BLOCK: u8 = 28;
+    pub const WARPED_WART_BLOCK: u8 = 29;
+    pub const SHROOMLIGHT: u8 = 30;
+    pub const CRIMSON_NYLIUM: u8 = 31;
+    pub const WARPED_NYLIUM: u8 = 32;
+    pub const BLACKSTONE: u8 = 33;
+    pub const FIRE: u8 = 34;
+    pub const SOUL_FIRE: u8 = 35;
+    pub const SOUL_SAND: u8 = 36;
+    pub const COUNT: usize = 37;
 }
 
 pub struct FaceTex {
@@ -273,6 +284,54 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     let mut basalt = Material::uniform("basalt", seed, MatParams { specular_coef: 0.1, specular_exp: 14.0, ..Default::default() });
     basalt.normal_strength = 0.5;
     entries[block::BASALT as usize] = Some(basalt);
+
+    // ---------- Nether: flora e isla compacta (parte 3, sesion 3) ----------
+
+    let mut crimson_stem = Material::uniform_bumped("crimson_stem", seed, MatParams { specular_coef: 0.05, specular_exp: 8.0, ..Default::default() });
+    crimson_stem.normal_strength = 0.8;
+    entries[block::CRIMSON_STEM as usize] = Some(crimson_stem);
+
+    let mut warped_stem = Material::uniform_bumped("warped_stem", seed, MatParams { specular_coef: 0.05, specular_exp: 8.0, ..Default::default() });
+    warped_stem.normal_strength = 0.8;
+    entries[block::WARPED_STEM as usize] = Some(warped_stem);
+
+    let mut nether_wart_block = Material::uniform_bumped("nether_wart_block", seed, MatParams { specular_coef: 0.02, specular_exp: 4.0, ..Default::default() });
+    nether_wart_block.normal_strength = 1.3;
+    entries[block::NETHER_WART_BLOCK as usize] = Some(nether_wart_block);
+
+    let mut warped_wart_block = Material::uniform_bumped("warped_wart_block", seed, MatParams { specular_coef: 0.02, specular_exp: 4.0, ..Default::default() });
+    warped_wart_block.normal_strength = 1.3;
+    entries[block::WARPED_WART_BLOCK as usize] = Some(warped_wart_block);
+
+    // Shroomlight: emisivo naranja calido, cuelga de la copa de los
+    // hongos gigantes y se registra sola como luz puntual.
+    let shroomlight = Material::uniform("shroomlight", seed, MatParams { specular_coef: 0.1, specular_exp: 10.0, emission: Vec3::new(1.0, 0.6, 0.25) * 2.2, ..Default::default() });
+    entries[block::SHROOMLIGHT as usize] = Some(shroomlight);
+
+    let mut crimson_nylium = Material::uniform("crimson_nylium", seed, MatParams { specular_coef: 0.04, specular_exp: 6.0, ..Default::default() });
+    crimson_nylium.bottom = FaceTex::new(load_or_generate("netherrack", seed));
+    entries[block::CRIMSON_NYLIUM as usize] = Some(crimson_nylium);
+
+    let mut warped_nylium = Material::uniform("warped_nylium", seed, MatParams { specular_coef: 0.04, specular_exp: 6.0, ..Default::default() });
+    warped_nylium.bottom = FaceTex::new(load_or_generate("netherrack", seed));
+    entries[block::WARPED_NYLIUM as usize] = Some(warped_nylium);
+
+    let mut blackstone = Material::uniform_bumped("blackstone", seed, MatParams { specular_coef: 0.15, specular_exp: 22.0, reflectivity: 0.04, ..Default::default() });
+    blackstone.normal_strength = 0.9;
+    entries[block::BLACKSTONE as usize] = Some(blackstone);
+
+    // Fuego y fuego de alma: alpha cutout (silueta de llama recortada en la
+    // textura, no geometria de cruz) y emisivos, sin sombra propia (igual
+    // que la lava/magma, la emision no pasa por el rayo de sombra).
+    let mut fire = Material::uniform("fire", seed, MatParams { emission: Vec3::new(1.0, 0.55, 0.15) * 2.0, ..Default::default() });
+    fire.alpha_cutout = true;
+    entries[block::FIRE as usize] = Some(fire);
+
+    let mut soul_fire = Material::uniform("soul_fire", seed, MatParams { emission: Vec3::new(0.3, 0.75, 1.0) * 2.0, ..Default::default() });
+    soul_fire.alpha_cutout = true;
+    entries[block::SOUL_FIRE as usize] = Some(soul_fire);
+
+    entries[block::SOUL_SAND as usize] = Some(Material::uniform("soul_sand", seed, MatParams { specular_coef: 0.02, specular_exp: 4.0, ..Default::default() }));
 
     // ---------- End ----------
 

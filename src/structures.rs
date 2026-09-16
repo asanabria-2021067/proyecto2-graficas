@@ -426,7 +426,11 @@ fn build_lava_lake_and_falls(world: &mut World, hm: &Heightmap, cx: i32, cz: i32
     for w in -1..=1 {
         let x = edge_x + (perp_x * w as f32).round() as i32;
         let z = edge_z + (perp_z * w as f32).round() as i32;
-        for depth in 0..22 {
+        // La cascada en si (3 de ancho) llega hasta 22 bloques; el carril
+        // central sigue solo, como un hilo delgado de lava que se angosta
+        // y sigue cayendo hacia el vacio bastante mas abajo de la isla.
+        let depth_max = if w == 0 { 40 } else { 22 };
+        for depth in 0..depth_max {
             let y = lava_level - depth;
             if y < 1 {
                 break;
@@ -446,21 +450,163 @@ fn build_nether_portal(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
     world.fill_box((cx - 1, y0 + 1, cz), (cx, y0 + 3, cz), block::PORTAL);
 }
 
-/// Ruinas chicas de una fortaleza del Nether: cuatro pilares de distinta
-/// altura, dos dinteles a modo de arco, y una pasarela central.
-fn build_nether_ruins(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
-    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
-    flatten_area(world, cx - 6, cz - 6, cx + 6, cz + 6, base_y, block::NETHERRACK);
+/// Reemplaza netherrack por nylium (carmesi o distorsionado) en un parche
+/// circular -- el suelo bajo cada arbol hongo gigante.
+fn build_nylium_patch(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, r: i32, nylium_id: u8) {
+    for dz in -r..=r {
+        for dx in -r..=r {
+            if dx * dx + dz * dz > r * r {
+                continue;
+            }
+            let x = cx + dx;
+            let z = cz + dz;
+            let Some(y) = hm.top_at(x, z) else { continue };
+            if world.get(x, y, z) == block::NETHERRACK {
+                world.set(x, y, z, nylium_id);
+            }
+        }
+    }
+}
 
-    let pillar_h = [5, 7, 6, 8];
-    let offsets = [(-5, -4), (5, -4), (-5, 4), (5, 4)];
-    for (i, &(dx, dz)) in offsets.iter().enumerate() {
-        place_pillar(world, cx + dx, cz + dz, base_y + 1, base_y + pillar_h[i], block::NETHER_BRICKS);
+/// Arbol hongo gigante (carmesi o distorsionado segun los materiales que se
+/// le pasen): tronco delgado, copa irregular de 3 capas con ramas que caen
+/// por el borde, y shroomlights emisivos en la punta y adentro de la copa.
+#[allow(clippy::too_many_arguments)]
+fn build_fungus_tree(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, stem_id: u8, wart_id: u8, shroom_id: u8, height: i32, seed: u32) {
+    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
+    place_pillar(world, cx, cz, base_y + 1, base_y + height, stem_id);
+
+    let mut rng = Pcg32::new(seed as u64 ^ 0x7075_1CA9, 0xFE);
+    let canopy_y = base_y + height - 2;
+    let r = 3;
+    for layer in 0..3 {
+        let cy = canopy_y + layer;
+        let lr = if layer == 2 { r - 1 } else { r };
+        for dz in -lr..=lr {
+            for dx in -lr..=lr {
+                let d2 = dx * dx + dz * dz;
+                if d2 > lr * lr || (dx == 0 && dz == 0) {
+                    continue;
+                }
+                if d2 == lr * lr && rng.next_f32() < 0.35 {
+                    continue;
+                }
+                world.set(cx + dx, cy, cz + dz, wart_id);
+            }
+        }
     }
-    for &dz in &[-4, 4] {
-        world.fill_box((cx - 5, base_y + 5, cz + dz), (cx + 5, base_y + 5, cz + dz), block::NETHER_BRICKS);
+    for _ in 0..4 {
+        let angle = rng.range_f32(0.0, std::f32::consts::PI * 2.0);
+        let dist = r as f32 * rng.range_f32(0.7, 1.0);
+        let dx = (angle.cos() * dist).round() as i32;
+        let dz = (angle.sin() * dist).round() as i32;
+        let drop = rng.range_i32(1, 2);
+        world.fill_box((cx + dx, canopy_y - drop, cz + dz), (cx + dx, canopy_y - 1, cz + dz), wart_id);
     }
-    build_walkway(world, cx, cz - 4, base_y + 1, cx, cz + 4, base_y + 1, 2, block::NETHER_BRICKS, block::NETHER_BRICKS);
+    world.set(cx, base_y + height + 1, cz, shroom_id);
+    let inner_angle = rng.range_f32(0.0, std::f32::consts::PI * 2.0);
+    let ix = (inner_angle.cos() * 1.5).round() as i32;
+    let iz = (inner_angle.sin() * 1.5).round() as i32;
+    world.set(cx + ix, canopy_y + 1, cz + iz, shroom_id);
+}
+
+/// Formacion de roca de blackstone/basalto con una fuente de lava en la
+/// punta que cae como cascada por un costado hasta un charco al pie.
+fn build_blackstone_formation(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, seed: u32) {
+    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
+    let mut rng = Pcg32::new(seed as u64 ^ 0xB1AC_057E, 0x99);
+    let r = 3;
+    let peak_h = base_y + 5;
+    for dz in -r..=r {
+        for dx in -r..=r {
+            let d2 = dx * dx + dz * dz;
+            if d2 > r * r {
+                continue;
+            }
+            let Some(top) = hm.top_at(cx + dx, cz + dz) else { continue };
+            let h = (peak_h as f32 - (d2 as f32).sqrt() * 1.3).round() as i32;
+            let mat = if rng.next_f32() < 0.3 { block::BASALT } else { block::BLACKSTONE };
+            world.fill_box((cx + dx, top + 1, cz + dz), (cx + dx, h.max(top + 1), cz + dz), mat);
+        }
+    }
+    let pool_r = 2;
+    let (pcx, pcz) = (cx + r + 2, cz);
+    for dz in -pool_r..=pool_r {
+        for dx in -pool_r..=pool_r {
+            if dx * dx + dz * dz > pool_r * pool_r {
+                continue;
+            }
+            let Some(top) = hm.top_at(pcx + dx, pcz + dz) else { continue };
+            world.set(pcx + dx, top, pcz + dz, block::LAVA);
+        }
+    }
+    for y in base_y..=peak_h {
+        world.set(cx + r, y, cz, block::LAVA);
+    }
+    world.set(cx, peak_h + 1, cz, block::LAVA);
+}
+
+/// Fuegos naranjas dispersos sobre netherrack/nylium (bloque con alpha
+/// cutout, sin geometria de cruz explicita).
+fn scatter_fire(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, radius: f32, count: u32, seed: u32) {
+    let mut rng = Pcg32::new(seed as u64 ^ 0xF17E_0000, 0x42);
+    let mut placed = 0;
+    let mut attempts = 0;
+    while placed < count && attempts < count * 20 {
+        attempts += 1;
+        let x = cx + rng.range_i32(-radius as i32, radius as i32);
+        let z = cz + rng.range_i32(-radius as i32, radius as i32);
+        let Some(y) = hm.top_at(x, z) else { continue };
+        let top = world.get(x, y, z);
+        if top != block::NETHERRACK && top != block::CRIMSON_NYLIUM && top != block::WARPED_NYLIUM {
+            continue;
+        }
+        world.set(x, y + 1, z, block::FIRE);
+        placed += 1;
+    }
+}
+
+/// Parche de soul_sand con un par de fuegos de alma azules, para contraste
+/// de color con los fuegos naranjas.
+fn build_soul_fire_patch(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, r: i32, seed: u32) {
+    let mut rng = Pcg32::new(seed as u64 ^ 0x50F1_0000, 0x17);
+    for dz in -r..=r {
+        for dx in -r..=r {
+            if dx * dx + dz * dz > r * r {
+                continue;
+            }
+            let x = cx + dx;
+            let z = cz + dz;
+            let Some(y) = hm.top_at(x, z) else { continue };
+            world.set(x, y, z, block::SOUL_SAND);
+            if rng.next_f32() < 0.35 {
+                world.set(x, y + 1, z, block::SOUL_FIRE);
+            }
+        }
+    }
+}
+
+/// Camino en zig-zag de blackstone que cuelga por debajo del borde real de
+/// la isla, bajando en escalones como una raiz o escalera colgante.
+fn build_hanging_zigzag_path(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, start_angle_deg: f32, segments: i32) {
+    let dir = start_angle_deg.to_radians();
+    let (ex, ez, ey) = find_edge(hm, cx, cz, dir, 200.0);
+    let (mut x, mut z, mut y) = (ex, ez, ey - 1);
+    let (fwd_x, fwd_z) = (dir.cos(), dir.sin());
+    let (perp_x, perp_z) = (-fwd_z, fwd_x);
+    let seg_len = 3;
+    for i in 0..segments {
+        let side = if i % 2 == 0 { 1.0 } else { -1.0 };
+        for _ in 0..seg_len {
+            x += (perp_x * side).round() as i32;
+            z += (perp_z * side).round() as i32;
+            world.set(x, y, z, block::BLACKSTONE);
+            y -= 1;
+        }
+        x += fwd_x.round() as i32;
+        z += fwd_z.round() as i32;
+        world.set(x, y, z, block::BLACKSTONE);
+    }
 }
 
 /// Cuelga glowstone del borde real de la isla (calculado con `find_edge`,
@@ -873,32 +1019,53 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     // Isla del Nether: a un costado y mas abajo que la principal (offset.y
     // negativo), perfil de ruido "ridged" (generate_rugged_island) en vez
     // del fBm suave de las demas. Union por un puente de nether_bricks.
-    let nether_r = 30.0f32;
-    let nether_gap = 16.0;
+    let nether_r = 11.0f32;
+    let nether_gap = 8.0;
     let nether_angle = 320.0f32;
     let nether_xz = (
         main_center_world.x + nether_angle.to_radians().cos() * (r + nether_gap + nether_r),
         main_center_world.z + nether_angle.to_radians().sin() * (r + nether_gap + nether_r),
     );
     let params_n = IslandParams::new(nether_r, 0);
-    let offset_n = ((nether_xz.0 as i32) - params_n.center_x, -24, (nether_xz.1 as i32) - params_n.center_z);
+    let offset_n = ((nether_xz.0 as i32) - params_n.center_x, -13, (nether_xz.1 as i32) - params_n.center_z);
     let (nether_world, nether_hm) = generate_rugged_island(seed.wrapping_add(303), &params_n);
     let nether_idx = islands.len();
     islands.push(Island::new(nether_world, offset_n));
     let nether = BuiltIsland { index: nether_idx, heightmap: nether_hm, params: params_n };
 
     let (ncx, ncz, nr) = (nether.params.center_x, nether.params.center_z, nether.params.radius);
-    let lava_level = nether.params.top_y - 6;
-    let (plx, plz) = polar(ncx, ncz, 200.0, nr * 0.3);
+    let nseed = seed.wrapping_add(303);
+    let lava_level = nether.params.top_y - 5;
+
+    let (plx, plz) = polar(ncx, ncz, 200.0, nr * 0.4);
     build_nether_portal(&mut islands[nether.index].world, &nether.heightmap, plx, plz);
 
-    let (llx, llz) = polar(ncx, ncz, 20.0, nr * 0.3);
-    build_lava_lake_and_falls(&mut islands[nether.index].world, &nether.heightmap, llx, llz, (nr * 0.28) as i32, lava_level, 20.0);
+    let (llx, llz) = polar(ncx, ncz, 320.0, nr * 0.25);
+    build_lava_lake_and_falls(&mut islands[nether.index].world, &nether.heightmap, llx, llz, (nr * 0.3) as i32, lava_level, 320.0);
 
-    let (rux, ruz) = polar(ncx, ncz, 110.0, nr * 0.4);
-    build_nether_ruins(&mut islands[nether.index].world, &nether.heightmap, rux, ruz);
+    // Arbol hongo carmesi grande, con nylium carmesi debajo.
+    let (ctx, ctz) = polar(ncx, ncz, 30.0, nr * 0.35);
+    build_nylium_patch(&mut islands[nether.index].world, &nether.heightmap, ctx, ctz, 3, block::CRIMSON_NYLIUM);
+    build_fungus_tree(&mut islands[nether.index].world, &nether.heightmap, ctx, ctz, block::CRIMSON_STEM, block::NETHER_WART_BLOCK, block::SHROOMLIGHT, 9, nseed);
 
-    hang_glowstone_edge(&mut islands[nether.index].world, &nether.heightmap, ncx, ncz, nr, 8, seed.wrapping_add(303));
+    // Arbol hongo distorsionado grande, con nylium turquesa debajo.
+    let (wtx, wtz) = polar(ncx, ncz, 150.0, nr * 0.35);
+    build_nylium_patch(&mut islands[nether.index].world, &nether.heightmap, wtx, wtz, 3, block::WARPED_NYLIUM);
+    build_fungus_tree(&mut islands[nether.index].world, &nether.heightmap, wtx, wtz, block::WARPED_STEM, block::WARPED_WART_BLOCK, block::SHROOMLIGHT, 8, nseed.wrapping_add(7));
+
+    // Formacion de blackstone/basalto con fuente de lava y charco al pie.
+    let (bfx, bfz) = polar(ncx, ncz, 260.0, nr * 0.35);
+    build_blackstone_formation(&mut islands[nether.index].world, &nether.heightmap, bfx, bfz, nseed);
+
+    // Fuegos naranjas dispersos y un parche de soul_sand con fuego de alma.
+    scatter_fire(&mut islands[nether.index].world, &nether.heightmap, ncx, ncz, nr * 0.75, 7, nseed);
+    let (sfx, sfz) = polar(ncx, ncz, 90.0, nr * 0.5);
+    build_soul_fire_patch(&mut islands[nether.index].world, &nether.heightmap, sfx, sfz, 2, nseed);
+
+    // Camino en zig-zag de blackstone colgando por debajo del borde.
+    build_hanging_zigzag_path(&mut islands[nether.index].world, &nether.heightmap, ncx, ncz, 230.0, 4);
+
+    hang_glowstone_edge(&mut islands[nether.index].world, &nether.heightmap, ncx, ncz, nr, 5, nseed);
 
     let nether_bridge = BridgeStyle { deck_id: block::NETHER_BRICKS, rail_id: block::OBSIDIAN, support_id: block::NETHER_BRICKS, lamp_id: block::GLOWSTONE, arch: true, curve_amount: 2.5 };
     build_bridge(&mut islands, main.index, &main.heightmap, &main.params, nether.index, &nether.heightmap, &nether.params, offset_n.1 + 4, &nether_bridge);

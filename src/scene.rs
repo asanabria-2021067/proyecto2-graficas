@@ -1,11 +1,11 @@
-use crate::intersect::{traverse, HitInfo};
+use crate::intersect::HitInfo;
+use crate::islands::{traverse_islands, Island};
 use crate::lights::LightGrid;
 use crate::material::{Material, MaterialTable};
 use crate::math::{Ray, Vec3};
 use crate::render::Tracer;
 use crate::shading::{aces_tonemap, beer_lambert, face_tex, is_visible, perturb_normal, shade_surface, Environment};
 use crate::skybox::Skybox;
-use crate::world::World;
 
 const EPS: f32 = 1e-3;
 const MIN_CONTRIB: f32 = 0.01;
@@ -24,7 +24,7 @@ pub fn max_depth_for_quality(quality: u8) -> u32 {
 /// volumes (fase 5). This is "the scene" in the fase-9 sense, just built
 /// incrementally from fase 4/5 test worlds until the lighthouse island lands.
 pub struct Scene<'a> {
-    pub world: &'a World,
+    pub islands: &'a [Island],
     pub materials: &'a MaterialTable,
     pub lights: &'a LightGrid,
     pub skybox: &'a Skybox,
@@ -55,7 +55,7 @@ impl Scene<'_> {
             return Vec3::zero();
         }
         let materials = self.materials;
-        let hit = traverse(self.world, ray, f32::INFINITY, |id, face, uv| id != current_medium && (id == 0 || is_visible(materials, id, face, uv)));
+        let hit = traverse_islands(self.islands, ray, f32::INFINITY, |id, face, uv| id != current_medium && (id == 0 || is_visible(materials, id, face, uv)));
         let Some(hit) = hit else {
             return self.sky(ray.dir);
         };
@@ -73,7 +73,7 @@ impl Scene<'_> {
         let local = if hit.block == 0 {
             Vec3::zero()
         } else {
-            shade_surface(&hit, shading_normal, -ray.dir, self.world, self.materials, self.lights, &self.env)
+            shade_surface(&hit, shading_normal, -ray.dir, self.islands, self.materials, self.lights, &self.env)
         };
 
         let mut result = match surface_mat {

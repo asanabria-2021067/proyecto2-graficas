@@ -51,8 +51,10 @@ pub struct HitInfo {
     pub voxel: (i32, i32, i32),
 }
 
-/// Ray vs world AABB, slab method. Returns (t_enter, t_exit) clamped so t_enter >= 0.
-fn intersect_aabb(ray: Ray, bmin: Vec3, bmax: Vec3) -> Option<(f32, f32)> {
+/// Ray vs box AABB, slab method. Returns (t_enter, t_exit) clamped so t_enter >= 0.
+/// `pub(crate)` porque islands.rs tambien la usa para ordenar candidatos por
+/// t de entrada antes de hacer DDA en cada isla.
+pub(crate) fn intersect_aabb(ray: Ray, bmin: Vec3, bmax: Vec3) -> Option<(f32, f32)> {
     let o = [ray.origin.x, ray.origin.y, ray.origin.z];
     let d = [ray.dir.x, ray.dir.y, ray.dir.z];
     let lo = [bmin.x, bmin.y, bmin.z];
@@ -166,7 +168,32 @@ pub fn traverse(world: &World, ray: Ray, max_t: f32, accept: impl Fn(u8, Face, (
         vy = voxel[1];
         vz = voxel[2];
         let block = world.get(vx, vy, vz);
-        if block != 0 {
+        if block == 0 {
+            // Ojo: llamamos a accept() incluso para aire. Los rayos "normales"
+            // (predicado sin conocimiento de medio) rechazan el aire barato
+            // (uv (0,0), sin frac0/face_uv) para seguir atravesandolo; pero un
+            // rayo que viaja DENTRO de un medio transparente (agua, vidrio)
+            // necesita poder aceptar el aire como el evento de "salida del
+            // medio" -- si nos saltaramos el aire sin preguntar, ese rayo
+            // jamas podria salir del volumen y terminaria perdiendose hasta
+            // los limites del mundo (bug real: el agua se veia como un hueco
+            // gris porque la refraccion nunca encontraba el fondo, se
+            // escapaba por el aire de encima). El caso comun (aire normal,
+            // fuera de cualquier medio) sigue siendo casi gratis: nada de
+            // frac0/face_uv hasta que de verdad haga falta.
+            if accept(0, entry_face, (0.0, 0.0)) {
+                let point = ray.at(entry_t.max(0.0));
+                return Some(HitInfo {
+                    t: entry_t,
+                    point,
+                    normal: entry_face.normal(),
+                    face: entry_face,
+                    uv: (0.0, 0.0),
+                    block: 0,
+                    voxel: (vx, vy, vz),
+                });
+            }
+        } else {
             let point = ray.at(entry_t.max(0.0));
             let local = Vec3::new(frac0(point.x), frac0(point.y), frac0(point.z));
             let uv = face_uv(entry_face, local);

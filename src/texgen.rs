@@ -283,6 +283,262 @@ fn lamp_frame(seed: u32) -> Vec<u8> {
     buf
 }
 
+fn netherrack(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let pit = rand01(seed ^ 0x9E7A, x / 2, y / 2) < 0.3;
+            let base = if pit { 70 } else { 118 };
+            let r = vary(base, 22, n);
+            let g = vary(base / 3, 10, n);
+            let b = vary(base / 4, 8, n);
+            put(&mut buf, x, y, [r, g, b, 255]);
+        }
+    }
+    buf
+}
+
+fn nether_bricks(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    let brick_w = 8u32;
+    let brick_h = 4u32;
+    for y in 0..SIZE {
+        let row = y / brick_h;
+        let offset = if row.is_multiple_of(2) { 0 } else { brick_w / 2 };
+        for x in 0..SIZE {
+            let bx = (x + offset) % SIZE;
+            let mortar = bx.is_multiple_of(brick_w) || y.is_multiple_of(brick_h);
+            let n = rand01(seed, x, y);
+            if mortar {
+                let v = vary(30, 8, n);
+                put(&mut buf, x, y, [v, (v as i32 - 10).clamp(0, 255) as u8, (v as i32 - 5).clamp(0, 255) as u8, 255]);
+            } else {
+                let r = vary(95, 14, n);
+                put(&mut buf, x, y, [r, vary(38, 8, n), vary(40, 8, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn lava(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let wave = ((x as f32 * 0.8 + y as f32 * 0.6).sin() * 0.5 + (y as f32 * 0.5 - x as f32 * 0.3).cos() * 0.5) * 0.5 + 0.5;
+            let n = rand01(seed, x, y);
+            let r = vary(235, 15, n);
+            let g = (vary(110, 20, n) as f32 + wave * 60.0).clamp(0.0, 255.0) as u8;
+            let b = vary(20, 10, n);
+            put(&mut buf, x, y, [r, g, b, 255]);
+        }
+    }
+    buf
+}
+
+fn obsidian(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let fleck = rand01(seed ^ 0x0B51, x, y) > 0.88;
+            if fleck {
+                put(&mut buf, x, y, [vary(110, 20, n), vary(40, 15, n), vary(170, 20, n), 255]);
+            } else {
+                put(&mut buf, x, y, [vary(12, 5, n), vary(9, 4, n), vary(18, 6, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn portal(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let r = vary(120, 25, n);
+            let g = vary(40, 15, n);
+            let b = vary(210, 20, n);
+            put(&mut buf, x, y, [r, g, b, 150]);
+        }
+    }
+    buf
+}
+
+/// Mapa de normales "magico" para el portal: un remolino a base de
+/// senos/cosenos (no ruido de bloques) para que la refraccion se vea
+/// distorsionada, no solo tenida de color.
+fn portal_normal(_seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    let c = (SIZE as f32 - 1.0) / 2.0;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f32 - c;
+            let dy = y as f32 - c;
+            let angle = dy.atan2(dx);
+            let radius = (dx * dx + dy * dy).sqrt();
+            let swirl = radius * 0.9 - angle * 2.5;
+            let nx = swirl.sin() * 0.7;
+            let ny = (swirl * 1.3).cos() * 0.7;
+            let n = Vec3n { x: nx, y: ny, z: 1.0 }.normalized();
+            put(&mut buf, x, y, [((n.x * 0.5 + 0.5) * 255.0) as u8, ((n.y * 0.5 + 0.5) * 255.0) as u8, ((n.z * 0.5 + 0.5) * 255.0) as u8, 255]);
+        }
+    }
+    buf
+}
+
+// Vec3 chiquito solo para no importar math.rs aca (texgen es un modulo
+// autocontenido, generado antes de que exista la escena).
+struct Vec3n {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+impl Vec3n {
+    fn normalized(self) -> Self {
+        let len = (self.x * self.x + self.y * self.y + self.z * self.z).sqrt().max(1e-6);
+        Vec3n { x: self.x / len, y: self.y / len, z: self.z / len }
+    }
+}
+
+#[inline]
+fn magma_crack(seed: u32, x: u32, y: u32) -> bool {
+    let cell = rand01(seed ^ 0x3A0C, x / 3, y / 3);
+    let jitter = rand01(seed ^ 0x3A0D, x, y);
+    cell > 0.6 && jitter > 0.4
+}
+
+fn magma(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            if magma_crack(seed, x, y) {
+                put(&mut buf, x, y, [vary(200, 20, n), vary(90, 15, n), vary(15, 8, n), 255]);
+            } else {
+                let v = vary(45, 10, n);
+                put(&mut buf, x, y, [v, (v as i32 - 8).clamp(0, 255) as u8, (v as i32 - 10).clamp(0, 255) as u8, 255]);
+            }
+        }
+    }
+    buf
+}
+
+/// Mapa de emision del magma: negro salvo justo en las grietas (mismo patron
+/// que `magma`, asi que coinciden pixel a pixel), donde va bien brillante.
+fn magma_emission(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            if magma_crack(seed, x, y) {
+                let n = rand01(seed, x, y);
+                put(&mut buf, x, y, [vary(255, 10, n), vary(150, 20, n), vary(30, 15, n), 255]);
+            } else {
+                put(&mut buf, x, y, [0, 0, 0, 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn basalt(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let col = x / 2;
+            let stripe = rand01(seed ^ 0x8A51, col, 0) * 20.0 - 10.0;
+            let n = rand01(seed, x, y);
+            let base = (76.0 + stripe) as u8;
+            put(&mut buf, x, y, [vary(base, 8, n), vary(base - 6, 8, n), vary((base as i32 + 12).clamp(0, 255) as u8, 8, n), 255]);
+        }
+    }
+    buf
+}
+
+fn end_stone(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let dot = rand01(seed ^ 0x3ED0, x, y) > 0.82;
+            if dot {
+                put(&mut buf, x, y, [vary(178, 12, n), vary(150, 12, n), vary(120, 10, n), 255]);
+            } else {
+                put(&mut buf, x, y, [vary(220, 8, n), vary(214, 8, n), vary(168, 10, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn purpur(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    let cell = 4u32;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let border = x % cell == 0 || y % cell == 0;
+            if border {
+                put(&mut buf, x, y, [vary(110, 10, n), vary(70, 10, n), vary(120, 10, n), 255]);
+            } else {
+                put(&mut buf, x, y, [vary(150, 14, n), vary(100, 12, n), vary(165, 14, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn end_crystal(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    let c = (SIZE as f32 - 1.0) / 2.0;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let dx = x as f32 - c;
+            let dy = y as f32 - c;
+            let dist = (dx * dx + dy * dy).sqrt() / c;
+            let glow = (1.0 - dist).clamp(0.0, 1.0);
+            let r = vary(210, 10, n) as f32 + glow * 40.0;
+            let g = vary(140, 10, n) as f32 + glow * 60.0;
+            let b = vary(240, 8, n) as f32;
+            put(&mut buf, x, y, [r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255]);
+        }
+    }
+    buf
+}
+
+fn end_rod(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    let c = SIZE / 2;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let core = x.abs_diff(c) <= 2;
+            let v = if core { vary(250, 4, n) } else { vary(225, 10, n) };
+            put(&mut buf, x, y, [v, v, vary(200, 8, n), 255]);
+        }
+    }
+    buf
+}
+
+fn chorus(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let hole = rand01(seed ^ 0x6C02, x, y) < 0.3;
+            let r = vary(96, 18, n);
+            let g = vary(52, 14, n);
+            let b = vary(112, 18, n);
+            let a = if hole { 0 } else { 255 };
+            put(&mut buf, x, y, [r, g, b, a]);
+        }
+    }
+    buf
+}
+
 /// Generates a 16x16 RGBA8 texture by name. Unknown names fall back to a
 /// magenta/black checker so a typo is obvious instead of silently blank.
 pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
@@ -301,6 +557,20 @@ pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
         "glowstone" => glowstone(seed),
         "iron_block" => iron_block(seed),
         "lamp_frame" => lamp_frame(seed),
+        "netherrack" => netherrack(seed),
+        "nether_bricks" => nether_bricks(seed),
+        "lava" => lava(seed),
+        "obsidian" => obsidian(seed),
+        "portal" => portal(seed),
+        "portal_normal" => portal_normal(seed),
+        "magma" => magma(seed),
+        "magma_emission" => magma_emission(seed),
+        "basalt" => basalt(seed),
+        "end_stone" => end_stone(seed),
+        "purpur" => purpur(seed),
+        "end_crystal" => end_crystal(seed),
+        "end_rod" => end_rod(seed),
+        "chorus" => chorus(seed),
         _ => {
             let mut buf = blank();
             for y in 0..SIZE {

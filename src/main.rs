@@ -4,6 +4,7 @@ mod cli;
 mod framebuffer;
 mod image_io;
 mod intersect;
+mod islands;
 mod lights;
 mod material;
 mod math;
@@ -23,49 +24,48 @@ use raylib::prelude::*;
 use camera::Camera;
 use cli::Args;
 use framebuffer::Framebuffer;
+use islands::Island;
 use lights::{build_light_grid, LightGrid};
 use material::MaterialTable;
 use math::Vec3;
-use render::{default_thread_count, render_frame};
+use render::{default_thread_count, render_frame, render_frame_ms, rotated_grid_3x3, SAMPLES_2X2};
 use scene::{max_depth_for_quality, Scene};
 use shading::{day_environment, night_environment, Environment};
 use skybox::Skybox;
-use structures::build_lighthouse_scene;
-use terrain::{Heightmap, IslandParams};
-use world::World;
+use structures::{build_lighthouse_scene, SceneIslands};
 
-const INTERNAL_W: u32 = 480;
-const INTERNAL_H: u32 = 270;
-const WORLD_NX: i32 = 160;
-const WORLD_NY: i32 = 64;
-const WORLD_NZ: i32 = 160;
+const MIN_WINDOW_W: u32 = 1280;
+const MIN_WINDOW_H: u32 = 720;
 
-/// Fase 9: "La isla del faro" construida sobre el terreno procedural de
-/// fase 8 (ver structures.rs).
-#[allow(dead_code)] // heightmap se usa para ubicar mas estructuras / camara
+/// Fase 9 + "parte 2": "La isla del faro" y vecinas, cada una su propia
+/// mini-grilla (`Island`, ver islands.rs) en vez de una grilla gigante
+/// compartida (ver structures.rs).
 struct WorldData {
-    world: World,
+    islands: Vec<Island>,
     materials: MaterialTable,
     lights: LightGrid,
-    heightmap: Heightmap,
-    island: IslandParams,
+    main_center: Vec3,
+    main_radius: f32,
+    nether_center: Vec3,
+    end_center: Vec3,
     gen_ms: f64,
 }
 
 fn build_world_data(seed: u32) -> WorldData {
     let t0 = std::time::Instant::now();
-    let mut world = World::new(WORLD_NX, WORLD_NY, WORLD_NZ);
-    let (heightmap, island) = build_lighthouse_scene(&mut world, seed);
+    let SceneIslands { islands, main_center, main_radius, nether_center, end_center } = build_lighthouse_scene(seed);
     let materials = material::build_material_table(seed);
-    let lights = build_light_grid(&world, &materials, 8.0);
+    let lights = build_light_grid(&islands, &materials, 8.0);
     let gen_ms = t0.elapsed().as_secs_f64() * 1000.0;
-    WorldData { world, materials, lights, heightmap, island, gen_ms }
+    WorldData { islands, materials, lights, main_center, main_radius, nether_center, end_center, gen_ms }
 }
 
+/// La distancia maxima de zoom tiene que alcanzar para que las 5 islas
+/// (principal, sus 2 satelites, Nether y End) entren en la vista general a
+/// la vez; la minima sigue centrada en la principal para poder acercarse a
+/// ver el detalle.
 fn build_camera(args: &Args, wd: &WorldData) -> Camera {
-    let center = Vec3::new(wd.island.center_x as f32, wd.island.top_y as f32, wd.island.center_z as f32);
-    let radius = wd.island.radius;
-    Camera::new(center, args.yaw, args.pitch, args.dist, radius * 0.6, radius * 8.0, 50.0)
+    Camera::new(wd.main_center, args.yaw, args.pitch, args.dist, wd.main_radius * 0.6, wd.main_radius * 9.0, 50.0)
 }
 
 fn environment_for(night: bool) -> Environment {
@@ -85,7 +85,7 @@ fn run_render_mode(args: &Args, path: &str) {
     println!("terreno generado en {:.2} ms (semilla {})", wd.gen_ms, args.seed);
     let skybox = build_skybox(args.seed);
     let scene = Scene {
-        world: &wd.world,
+        islands: &wd.islands,
         materials: &wd.materials,
         lights: &wd.lights,
         skybox: &skybox,
@@ -105,7 +105,7 @@ fn run_bench_mode(args: &Args) {
     let wd = build_world_data(args.seed);
     let skybox = build_skybox(args.seed);
     let scene = Scene {
-        world: &wd.world,
+        islands: &wd.islands,
         materials: &wd.materials,
         lights: &wd.lights,
         skybox: &skybox,
@@ -114,8 +114,7 @@ fn run_bench_mode(args: &Args) {
         max_depth: max_depth_for_quality(2),
         normalmaps: !args.no_normalmaps,
     };
-    let center = Vec3::new(wd.island.center_x as f32, wd.island.top_y as f32, wd.island.center_z as f32);
-    bench::run(&scene, args.width, args.height, center, wd.island.radius * 2.0);
+    bench::run(&scene, args.width, args.height, wd.main_center, wd.main_radius * 2.0);
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -123,18 +122,42 @@ struct FrameState {
     yaw_bits: u32,
     pitch_bits: u32,
     dist_bits: u32,
+    center_bits: (u32, u32, u32),
     night: bool,
     normalmaps: bool,
     quality: u8,
     seed: u32,
 }
 
+/// Cuanto se escala la resolucion interna del pase "camara en movimiento"
+/// segun la calidad (baja/media/alta).
+fn moving_scale(quality: u8) -> f32 {
+    match quality {
+        1 => 0.25,
+        3 => 0.75,
+        _ => 0.5,
+    }
+}
+
+/// Taps de supersampling del pase quieto segun la calidad: 1x en baja, grilla
+/// 2x2 en media, grilla 3x3 rotada en alta.
+fn settle_samples(quality: u8) -> Vec<(f32, f32)> {
+    match quality {
+        3 => rotated_grid_3x3().to_vec(),
+        1 => vec![(0.0, 0.0)],
+        _ => SAMPLES_2X2.to_vec(),
+    }
+}
+
 fn run_window_mode(args: &Args) {
+    let win_w = args.width.max(MIN_WINDOW_W);
+    let win_h = args.height.max(MIN_WINDOW_H);
+
     let (mut rl, thread) = raylib::init()
-        .size(args.width as i32, args.height as i32)
+        .size(win_w as i32, win_h as i32)
         .title("Diorama Raytracer - Proyecto 2 Graficas")
         .build();
-    rl.set_target_fps(60);
+    rl.set_target_fps(144);
 
     let mut wd = build_world_data(args.seed);
     let mut gen_ms = wd.gen_ms;
@@ -145,16 +168,28 @@ fn run_window_mode(args: &Args) {
     let mut quality: u8 = 2;
     let mut seed = args.seed;
     let mut auto_rotate = false;
+    // 0 = principal, 1 = Nether, 2 = End; teclas 4/5/6 la cambian y la camara
+    // se desliza suavemente (lerp) hacia el centro correspondiente en vez de
+    // saltar de golpe.
+    let mut cam_target_idx: u8 = 0;
 
-    let mut fb = Framebuffer::new(INTERNAL_W, INTERNAL_H);
-    let mut fb_low = Framebuffer::new(INTERNAL_W / 2, INTERNAL_H / 2);
-    let mut fb_high = Framebuffer::new(INTERNAL_W * 2, INTERNAL_H * 2);
-    let mut rgba = vec![0u8; (INTERNAL_W * INTERNAL_H * 4) as usize];
+    // El framebuffer principal siempre es 1:1 con la ventana: el pase quieto
+    // renderiza directo ahi (nitido, sin escalado), el pase en movimiento
+    // renderiza a `fb_low` (mas chico, segun calidad) y lo escala con
+    // nearest-neighbor -- nunca bilineal.
+    let mut fb = Framebuffer::new(win_w, win_h);
+    let mut fb_low = Framebuffer::new((win_w as f32 * moving_scale(quality)) as u32, (win_h as f32 * moving_scale(quality)) as u32);
+    let mut rgba = vec![0u8; (win_w * win_h * 4) as usize];
 
-    let image = Image::gen_image_color(INTERNAL_W as i32, INTERNAL_H as i32, Color::BLACK);
+    let image = Image::gen_image_color(win_w as i32, win_h as i32, Color::BLACK);
     let mut texture = rl
         .load_texture_from_image(&thread, &image)
         .expect("no se pudo crear la textura del framebuffer");
+    // Nearest-neighbor explicito: el escalado de resolucion interna es cosa
+    // nuestra (Framebuffer::upscale_into), la textura se dibuja siempre 1:1
+    // con la ventana, pero por las dudas desactivamos el filtro bilineal que
+    // raylib podria aplicarle a una textura escalada.
+    texture.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
 
     let mut last_state: Option<FrameState> = None;
     let mut was_moving = false;
@@ -217,15 +252,40 @@ fn run_window_mode(args: &Args) {
         if rl.is_key_pressed(KeyboardKey::KEY_THREE) {
             quality = 3;
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_FOUR) {
+            cam_target_idx = 0;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_FIVE) {
+            cam_target_idx = 1;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_SIX) {
+            cam_target_idx = 2;
+        }
         if auto_rotate {
             cam.orbit(0.5 * dt, 0.0);
             moving = true;
+        }
+
+        // Desliza el centro de la orbita hacia la isla elegida (4/5/6) en vez
+        // de saltar de golpe; se recalcula el destino cada frame a partir de
+        // `wd` para que siga sirviendo aunque G haya regenerado las islas.
+        let cam_target = match cam_target_idx {
+            1 => wd.nether_center,
+            2 => wd.end_center,
+            _ => wd.main_center,
+        };
+        if (cam.center - cam_target).length() > 0.02 {
+            cam.center = cam.center.lerp(cam_target, (dt * 3.0).min(1.0));
+            moving = true;
+        } else {
+            cam.center = cam_target;
         }
 
         let state = FrameState {
             yaw_bits: cam.yaw.to_bits(),
             pitch_bits: cam.pitch.to_bits(),
             dist_bits: cam.dist.to_bits(),
+            center_bits: (cam.center.x.to_bits(), cam.center.y.to_bits(), cam.center.z.to_bits()),
             night,
             normalmaps,
             quality,
@@ -239,7 +299,7 @@ fn run_window_mode(args: &Args) {
 
         if dirty {
             let scene = Scene {
-                world: &wd.world,
+                islands: &wd.islands,
                 materials: &wd.materials,
                 lights: &wd.lights,
                 skybox: &skybox,
@@ -249,21 +309,29 @@ fn run_window_mode(args: &Args) {
                 normalmaps,
             };
             // Resolucion adaptativa: mientras la camara se mueve, renderiza a
-            // mitad de resolucion y escala; al soltar, un pase a resolucion
-            // completa (con supersampling 2x2 en calidad alta).
-            let supersample = !moving && quality == 3;
+            // una fraccion de la resolucion de ventana (segun calidad) y
+            // escala con nearest-neighbor; al soltar, un pase a resolucion
+            // completa de ventana, con supersampling segun calidad (1x/2x2/
+            // 3x3 rotado).
             let t0 = std::time::Instant::now();
             let res_label = if moving {
+                let scale = moving_scale(quality);
+                let lw = ((win_w as f32 * scale) as u32).max(1);
+                let lh = ((win_h as f32 * scale) as u32).max(1);
+                if fb_low.width != lw || fb_low.height != lh {
+                    fb_low.resize(lw, lh);
+                }
                 render_frame(&mut fb_low, &cam, &scene, default_thread_count());
                 fb_low.upscale_into(&mut fb);
                 "BAJA-RES"
-            } else if supersample {
-                render_frame(&mut fb_high, &cam, &scene, default_thread_count());
-                fb_high.downsample_2x2_into(&mut fb);
-                "SSAA2X"
             } else {
-                render_frame(&mut fb, &cam, &scene, default_thread_count());
-                "COMPLETA"
+                let samples = settle_samples(quality);
+                render_frame_ms(&mut fb, &cam, &scene, default_thread_count(), &samples);
+                match quality {
+                    1 => "COMPLETA",
+                    3 => "SSAA-3X3",
+                    _ => "SSAA-2X2",
+                }
             };
             let last_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -275,10 +343,13 @@ fn run_window_mode(args: &Args) {
             };
             let mode = if night { "NOCHE" } else { "DIA" };
             let nm = if normalmaps { "ON" } else { "OFF" };
-            fb.draw_text(4, 4, &format!("FPS:{fps_est:.0} MS:{last_ms:.1} {res_label}"), 0x00FFFFFF, 1);
-            fb.draw_text(4, 12, &format!("RES:{INTERNAL_W}X{INTERNAL_H}"), 0x00FFFFFF, 1);
-            fb.draw_text(4, 20, &format!("SEED:{seed} {mode} Q:{quality_name}"), 0x00FFFFFF, 1);
-            fb.draw_text(4, 28, &format!("NORMALMAPS:{nm} GEN:{gen_ms:.1}MS"), 0x00FFFFFF, 1);
+            // El HUD se dibuja DESPUES del escalado/supersampling, directo
+            // sobre `fb` que ya esta a resolucion de ventana: el texto sale
+            // nitido tanto en el pase rapido como en el pase quieto.
+            fb.draw_text(4, 4, &format!("FPS:{fps_est:.0} MS:{last_ms:.1} {res_label}"), 0x00FFFFFF, 2);
+            fb.draw_text(4, 20, &format!("RES:{win_w}X{win_h}"), 0x00FFFFFF, 2);
+            fb.draw_text(4, 36, &format!("SEED:{seed} {mode} Q:{quality_name}"), 0x00FFFFFF, 2);
+            fb.draw_text(4, 52, &format!("NORMALMAPS:{nm} GEN:{gen_ms:.1}MS"), 0x00FFFFFF, 2);
 
             rgba.clear();
             for &p in &fb.pixels {
@@ -292,13 +363,9 @@ fn run_window_mode(args: &Args) {
             last_state = Some(state);
         }
 
-        let scale_x = args.width as f32 / INTERNAL_W as f32;
-        let scale_y = args.height as f32 / INTERNAL_H as f32;
-        let scale = scale_x.min(scale_y);
-
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::BLACK);
-        d.draw_texture_ex(&texture, Vector2::new(0.0, 0.0), 0.0, scale, Color::WHITE);
+        d.draw_texture_ex(&texture, Vector2::new(0.0, 0.0), 0.0, 1.0, Color::WHITE);
     }
 }
 

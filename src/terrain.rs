@@ -30,17 +30,6 @@ impl Heightmap {
             None
         }
     }
-
-    /// Copies over the columns `other` marks as part of an island, so a
-    /// scene with several islands can keep one combined heightmap.
-    pub fn merge(&mut self, other: &Heightmap) {
-        for i in 0..self.on_island.len() {
-            if other.on_island[i] {
-                self.on_island[i] = true;
-                self.top[i] = other.top[i];
-            }
-        }
-    }
 }
 
 pub struct IslandParams {
@@ -54,25 +43,43 @@ pub struct IslandParams {
 }
 
 impl IslandParams {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(center_x: i32, center_z: i32, radius: f32, top_y: i32, water_level: i32, max_depth: f32, tree_count: u32) -> Self {
-        IslandParams { center_x, center_z, radius, top_y, water_level, max_depth, tree_count }
+    /// Cada isla vive en su propia grilla chica (en vez de que todas
+    /// compartan una grilla gigante mayormente vacia), asi que el centro se
+    /// calcula solo a partir del radio: siempre es el centro de la grilla
+    /// que le toca (ver `grid_dims`). `top_y`/`water_level`/`max_depth`
+    /// quedan con valores por defecto razonables; se pueden pisar despues de
+    /// construir si una isla (Nether, End) necesita un perfil distinto.
+    pub fn new(radius: f32, tree_count: u32) -> Self {
+        let half = radius.ceil() as i32 + 10;
+        IslandParams {
+            center_x: half,
+            center_z: half,
+            radius,
+            top_y: 38,
+            water_level: 29,
+            max_depth: radius * 0.62,
+            tree_count,
+        }
     }
 
-    pub fn main_island(world: &World) -> Self {
-        let top_y = (world.ny as f32 * 0.60) as i32;
-        let water_level = (world.ny as f32 * 0.46) as i32;
-        IslandParams::new(world.nx / 2, world.nz / 2, (world.nx.min(world.nz) as f32) * 0.26, top_y, water_level, world.ny as f32 * 0.4, 24)
+    /// Tamano de grilla que le corresponde a esta isla: justo el radio mas
+    /// un margen, sin compartir espacio vacio con otras islas.
+    pub fn grid_dims(&self) -> (i32, i32, i32) {
+        let half = self.radius.ceil() as i32 + 10;
+        (half * 2, 80, half * 2)
     }
 }
 
-/// Generates a floating island in `world`: an fBm heightmap masked by a
-/// noise-deformed radial falloff (so the shoreline isn't a perfect circle),
-/// grass/dirt/stone layering with sand near the waterline and water filling
-/// the depressions, an irregular downward-tapering stone base (3D noise), and
-/// randomly placed trees with a minimum spacing. Returns the resulting
-/// heightmap for later phases to place structures on top of.
-pub fn generate_island(world: &mut World, seed: u32, p: &IslandParams) -> Heightmap {
+/// Genera una isla flotante en su propia grilla (creada aqui, del tamano
+/// justo que necesita): heightmap fBm enmascarado por un radio deformado con
+/// ruido (para que la orilla no sea un circulo perfecto), capas grass/dirt/
+/// stone_bricks con arena cerca del nivel de agua y agua llenando las
+/// depresiones, una base conica irregular hacia abajo (ruido 3D), y arboles
+/// colocados con distancia minima entre ellos. Devuelve la grilla nueva y su
+/// heightmap para que fases posteriores ubiquen estructuras encima.
+pub fn generate_island(seed: u32, p: &IslandParams) -> (World, Heightmap) {
+    let (nx, ny, nz) = p.grid_dims();
+    let mut world = World::new(nx, ny, nz);
     let perlin = Perlin::new(seed);
     let mut top = vec![i32::MIN; (world.nx * world.nz) as usize];
     let mut on_island = vec![false; (world.nx * world.nz) as usize];
@@ -121,8 +128,102 @@ pub fn generate_island(world: &mut World, seed: u32, p: &IslandParams) -> Height
     }
 
     let heightmap = Heightmap { nx: world.nx, nz: world.nz, top, on_island };
-    place_trees(world, &heightmap, p, seed);
-    heightmap
+    place_trees(&mut world, &heightmap, p, seed);
+    (world, heightmap)
+}
+
+/// Como `generate_island`, pero con un perfil de ruido "ridged" (se pliega el
+/// fBm sobre si mismo) para que en vez de colinas suaves salgan picos
+/// filosos y grietas entre ellos -- pensado para la isla del Nether. Capas
+/// solo de netherrack (sin pasto/tierra/agua), con parches de magma al azar
+/// en la superficie marcando las grietas que brillan. No planta arboles.
+pub fn generate_rugged_island(seed: u32, p: &IslandParams) -> (World, Heightmap) {
+    let (nx, ny, nz) = p.grid_dims();
+    let mut world = World::new(nx, ny, nz);
+    let perlin = Perlin::new(seed);
+    let mut top = vec![i32::MIN; (world.nx * world.nz) as usize];
+    let mut on_island = vec![false; (world.nx * world.nz) as usize];
+
+    for z in 0..world.nz {
+        for x in 0..world.nx {
+            let dx = (x - p.center_x) as f32;
+            let dz = (z - p.center_z) as f32;
+            let dist = (dx * dx + dz * dz).sqrt() / p.radius;
+
+            let edge_noise = perlin.fbm2(x as f32 * 0.06 + 700.0, z as f32 * 0.06, 4, 2.0, 0.55);
+            let dist_deformed = dist + edge_noise * 0.4; // orilla mas quebrada que la isla principal
+            if dist_deformed >= 1.0 {
+                continue;
+            }
+
+            let raw = perlin.fbm2(x as f32 * 0.09, z as f32 * 0.09, 5, 2.0, 0.5);
+            let ridged = (1.0 - raw.abs() * 2.0).clamp(-1.0, 1.0);
+            let surface_y = p.top_y + (ridged * 10.0) as i32;
+
+            let dist_norm = dist.clamp(0.0, 1.0);
+            let cone = p.max_depth * (1.0 - dist_norm).powf(1.3);
+            let jag = perlin.noise3(x as f32 * 0.12, z as f32 * 0.12, 11.7);
+            let bottom_y = (p.top_y as f32 - cone - (jag * 0.5 + 0.5) * 6.0).round() as i32;
+            let bottom_y = bottom_y.max(1);
+
+            let crack = perlin.noise3(x as f32 * 0.15, z as f32 * 0.15, 3.3) > 0.6;
+            let top_block = if crack { block::MAGMA } else { block::NETHERRACK };
+
+            world.fill_box((x, bottom_y, z), (x, (surface_y - 1).max(bottom_y), z), block::NETHERRACK);
+            world.set(x, surface_y, z, top_block);
+
+            let i = (z * world.nx + x) as usize;
+            top[i] = surface_y;
+            on_island[i] = true;
+        }
+    }
+
+    let heightmap = Heightmap { nx: world.nx, nz: world.nz, top, on_island };
+    (world, heightmap)
+}
+
+/// Como `generate_island`, pero con un perfil suave y redondeado (mucha
+/// menos amplitud de ruido, borde apenas deformado) para la isla del End:
+/// una loma achatada de bordes blandos en vez de colinas marcadas. Capas
+/// solo de end_stone (sin pasto/tierra/agua). No planta arboles.
+pub fn generate_soft_island(seed: u32, p: &IslandParams) -> (World, Heightmap) {
+    let (nx, ny, nz) = p.grid_dims();
+    let mut world = World::new(nx, ny, nz);
+    let perlin = Perlin::new(seed);
+    let mut top = vec![i32::MIN; (world.nx * world.nz) as usize];
+    let mut on_island = vec![false; (world.nx * world.nz) as usize];
+
+    for z in 0..world.nz {
+        for x in 0..world.nx {
+            let dx = (x - p.center_x) as f32;
+            let dz = (z - p.center_z) as f32;
+            let dist = (dx * dx + dz * dz).sqrt() / p.radius;
+
+            let edge_noise = perlin.fbm2(x as f32 * 0.035 + 300.0, z as f32 * 0.035, 3, 2.0, 0.5);
+            let dist_deformed = dist + edge_noise * 0.15; // borde mucho mas parejo que las demas islas
+            if dist_deformed >= 1.0 {
+                continue;
+            }
+
+            let height_noise = perlin.fbm2(x as f32 * 0.04, z as f32 * 0.04, 3, 2.0, 0.5);
+            let surface_y = p.top_y + (height_noise * 2.5) as i32;
+
+            let dist_norm = dist.clamp(0.0, 1.0);
+            let cone = p.max_depth * (1.0 - dist_norm).powf(1.8); // achatada: cae mas de golpe cerca del borde
+            let jag = perlin.noise3(x as f32 * 0.08, z as f32 * 0.08, 5.1);
+            let bottom_y = (p.top_y as f32 - cone - (jag * 0.5 + 0.5) * 2.0).round() as i32;
+            let bottom_y = bottom_y.max(1);
+
+            world.fill_box((x, bottom_y, z), (x, surface_y, z), block::END_STONE);
+
+            let i = (z * world.nx + x) as usize;
+            top[i] = surface_y;
+            on_island[i] = true;
+        }
+    }
+
+    let heightmap = Heightmap { nx: world.nx, nz: world.nz, top, on_island };
+    (world, heightmap)
 }
 
 fn place_trees(world: &mut World, hm: &Heightmap, p: &IslandParams, seed: u32) {

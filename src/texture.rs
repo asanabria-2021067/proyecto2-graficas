@@ -146,3 +146,17 @@ pub fn load_or_generate_normal(name: &str, albedo: &Texture) -> Texture {
         generate_normal_from_albedo(albedo)
     }
 }
+
+/// Like `load_or_generate_normal`, pero para normal maps que no se derivan
+/// del albedo (por ejemplo el remolino "magico" del portal): usa
+/// `assets/textures/<name>_n.bmp` si existe, si no genera con `texgen` bajo
+/// ese mismo nombre (una textura pensada para ser normal map, no color).
+pub fn load_or_generate_normal_named(name: &str, seed: u32) -> Texture {
+    let path = format!("assets/textures/{name}_n.bmp");
+    if let Ok(bmp) = image_io::read_bmp(&path) {
+        Texture::from_rgba8_raw(bmp.width, bmp.height, &bmp.rgba)
+    } else {
+        let (w, h, data) = texgen::generate(name, seed);
+        Texture::from_rgba8_raw(w, h, &data)
+    }
+}

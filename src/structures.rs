@@ -11,7 +11,7 @@ use crate::islands::Island;
 use crate::material::block;
 use crate::math::Vec3;
 use crate::noise::Pcg32;
-use crate::terrain::{generate_island, generate_rugged_island, Heightmap, IslandParams};
+use crate::terrain::{generate_island, generate_rugged_island, generate_soft_island, Heightmap, IslandParams};
 use crate::world::World;
 
 // ---------- helpers genericos ----------
@@ -434,6 +434,126 @@ fn hang_glowstone_edge(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, radi
     }
 }
 
+// ---------- End ----------
+
+/// Pilares de obsidiana de altura variable con un `end_crystal` flotando
+/// (con un hueco de aire encima, no pegado) sobre cada uno.
+fn build_end_pillars(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, radius: f32, seed: u32) {
+    let mut rng = Pcg32::new(seed as u64 ^ 0x3ED0_C1A1, 0x9E17);
+    let count = 4;
+    for i in 0..count {
+        let angle = (i as f32 / count as f32) * std::f32::consts::PI * 2.0 + rng.range_f32(-0.2, 0.2);
+        let dist = radius * rng.range_f32(0.35, 0.55);
+        let px = cx + (angle.cos() * dist).round() as i32;
+        let pz = cz + (angle.sin() * dist).round() as i32;
+        let Some(base_y) = hm.top_at(px, pz) else { continue };
+        let h = rng.range_i32(6, 12);
+        place_pillar(world, px, pz, base_y + 1, base_y + h, block::OBSIDIAN);
+        world.set(px, base_y + h + 2, pz, block::END_CRYSTAL);
+    }
+}
+
+/// Mini "ciudad del End": torre chica de purpur con un par de ventanas de
+/// vidrio y postes de end_rod (lamparas) en las esquinas del techo.
+fn build_end_city(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
+    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
+    flatten_area(world, cx - 4, cz - 4, cx + 4, cz + 4, base_y, block::END_STONE);
+    let y0 = base_y + 1;
+    let h = 8;
+    world.hollow_box((cx - 2, y0, cz - 2), (cx + 2, y0 + h - 1, cz + 2), block::PURPUR);
+    for &off in &[-1, 1] {
+        world.set(cx + off, y0 + 2, cz - 2, block::GLASS);
+        world.set(cx + off, y0 + 2, cz + 2, block::GLASS);
+        world.set(cx - 2, y0 + 2, cz + off, block::GLASS);
+        world.set(cx + 2, y0 + 2, cz + off, block::GLASS);
+    }
+    world.fill_box((cx, y0, cz - 2), (cx, y0 + 1, cz - 2), block::AIR); // puerta
+
+    for &(dx, dz) in &[(-2, -2), (2, -2), (-2, 2), (2, 2)] {
+        place_pillar(world, cx + dx, cz + dz, y0 + h, y0 + h + 1, block::PURPUR);
+        world.set(cx + dx, y0 + h + 2, cz + dz, block::END_ROD);
+    }
+    world.set(cx, y0 + h + 1, cz, block::PURPUR);
+    world.set(cx, y0 + h + 3, cz, block::END_ROD);
+}
+
+/// Plantas de chorus dispersas, creciendo sobre end_stone.
+fn scatter_chorus(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, radius: f32, seed: u32) {
+    let mut rng = Pcg32::new(seed as u64 ^ 0x6C02_C0DE, 0x0E27);
+    let mut placed = 0;
+    let mut attempts = 0;
+    while placed < 10 && attempts < 100 {
+        attempts += 1;
+        let x = cx + rng.range_i32(-radius as i32, radius as i32);
+        let z = cz + rng.range_i32(-radius as i32, radius as i32);
+        let Some(y) = hm.top_at(x, z) else { continue };
+        if world.get(x, y, z) != block::END_STONE {
+            continue;
+        }
+        let h = rng.range_i32(2, 4);
+        for i in 1..=h {
+            world.set(x, y + i, z, block::CHORUS);
+        }
+        placed += 1;
+    }
+}
+
+/// Anillo de bloques de end_stone flotando sueltos alrededor de la isla (sin
+/// tocarla), a distintas alturas -- un detalle "magico" tipico del End.
+fn build_floating_ring(world: &mut World, cx: i32, cz: i32, radius: f32, y: i32, seed: u32) {
+    let mut rng = Pcg32::new(seed as u64 ^ 0xF10A_7100, 0x77);
+    let count = 20;
+    for i in 0..count {
+        let angle = (i as f32 / count as f32) * std::f32::consts::PI * 2.0;
+        let r = radius + rng.range_f32(4.0, 9.0);
+        let x = cx + (angle.cos() * r).round() as i32;
+        let z = cz + (angle.sin() * r).round() as i32;
+        let yy = y + rng.range_i32(-3, 3);
+        world.set(x, yy, z, block::END_STONE);
+    }
+}
+
+/// Como `build_bridge`, pero para el camino "flotante" hacia el End: en vez
+/// de una pasarela continua con baranda, son bloques de end_stone salteados
+/// (huecos entre medio) a una altura que varia un poco de a uno, como
+/// piedras flotantes sueltas en vez de un puente solido.
+fn build_floating_path(islands: &mut Vec<Island>, idx_a: usize, hm_a: &Heightmap, pa: &IslandParams, idx_b: usize, hm_b: &Heightmap, pb: &IslandParams) {
+    let a_center_world = islands[idx_a].to_world_point(Vec3::new(pa.center_x as f32, pa.top_y as f32, pa.center_z as f32));
+    let b_center_world = islands[idx_b].to_world_point(Vec3::new(pb.center_x as f32, pb.top_y as f32, pb.center_z as f32));
+    let angle_deg = (b_center_world.z - a_center_world.z).atan2(b_center_world.x - a_center_world.x).to_degrees();
+
+    let edge_a = find_edge(hm_a, pa.center_x, pa.center_z, angle_deg.to_radians(), pa.radius + 200.0);
+    let edge_b = find_edge(hm_b, pb.center_x, pb.center_z, (angle_deg + 180.0).to_radians(), pb.radius + 200.0);
+    let edge_a_world = islands[idx_a].to_world_point(Vec3::new(edge_a.0 as f32, edge_a.2 as f32, edge_a.1 as f32));
+    let edge_b_world = islands[idx_b].to_world_point(Vec3::new(edge_b.0 as f32, edge_b.2 as f32, edge_b.1 as f32));
+
+    let margin = 4;
+    let min_x = edge_a_world.x.min(edge_b_world.x) as i32 - margin;
+    let max_x = edge_a_world.x.max(edge_b_world.x) as i32 + margin;
+    let min_z = edge_a_world.z.min(edge_b_world.z) as i32 - margin;
+    let max_z = edge_a_world.z.max(edge_b_world.z) as i32 + margin;
+    let min_y = edge_a_world.y.min(edge_b_world.y) as i32 - 6;
+    let path_offset = (min_x, min_y, min_z);
+    let mut path_island = Island::new(World::new((max_x - min_x).max(4), 20, (max_z - min_z).max(4)), path_offset);
+
+    let local_a = path_island.to_local_point(edge_a_world);
+    let local_b = path_island.to_local_point(edge_b_world);
+    let steps = (local_b.x - local_a.x).abs().max((local_b.z - local_a.z).abs()).max(1.0) as i32;
+    let mut rng = Pcg32::new((min_x as u64) ^ 0xE0D5_7EFF, 0x1D);
+    for i in 0..=steps {
+        if i % 2 == 1 {
+            continue; // salteado: bloques flotantes, no una pasarela continua
+        }
+        let t = i as f32 / steps as f32;
+        let x = (local_a.x + (local_b.x - local_a.x) * t).round() as i32;
+        let z = (local_a.z + (local_b.z - local_a.z) * t).round() as i32;
+        let y = (local_a.y + (local_b.y - local_a.y) * t).round() as i32 + rng.range_i32(-1, 1);
+        path_island.world.set(x, y, z, block::END_STONE);
+    }
+
+    islands.push(path_island);
+}
+
 /// Construye un puente entre dos islas COMO SU PROPIA MINI-GRILLA (`Island`
 /// nueva, empujada a `islands`): encuentra el borde real de cada isla en
 /// direccion a la otra (`find_edge`, funciona con cualquier semilla), nivela
@@ -579,6 +699,35 @@ pub fn build_lighthouse_scene(seed: u32) -> (Vec<Island>, Vec3, f32) {
     hang_glowstone_edge(&mut islands[nether.index].world, &nether.heightmap, ncx, ncz, nr, 8, seed.wrapping_add(303));
 
     build_bridge(&mut islands, main.index, &main.heightmap, &main.params, nether.index, &nether.heightmap, &nether.params, offset_n.1 + 4, block::NETHER_BRICKS, block::OBSIDIAN);
+
+    // Isla del End: al otro costado, mas alta y mas lejos que la principal
+    // (offset.y positivo, mayor separacion), perfil de ruido suave y
+    // redondeado (generate_soft_island). Union por un camino de bloques de
+    // end_stone flotantes (no un puente solido).
+    let end_r = 26.0f32;
+    let end_gap = 22.0;
+    let end_angle = 160.0f32;
+    let end_xz = (
+        main_center_world.x + end_angle.to_radians().cos() * (r + end_gap + end_r),
+        main_center_world.z + end_angle.to_radians().sin() * (r + end_gap + end_r),
+    );
+    let params_e = IslandParams::new(end_r, 0);
+    let offset_e = ((end_xz.0 as i32) - params_e.center_x, 32, (end_xz.1 as i32) - params_e.center_z);
+    let (end_world, end_hm) = generate_soft_island(seed.wrapping_add(404), &params_e);
+    let end_idx = islands.len();
+    islands.push(Island::new(end_world, offset_e));
+    let end_island = BuiltIsland { index: end_idx, heightmap: end_hm, params: params_e };
+
+    let (ecx, ecz, er) = (end_island.params.center_x, end_island.params.center_z, end_island.params.radius);
+    build_end_pillars(&mut islands[end_island.index].world, &end_island.heightmap, ecx, ecz, er, seed.wrapping_add(404));
+
+    let (cix, ciz) = polar(ecx, ecz, 30.0, er * 0.2);
+    build_end_city(&mut islands[end_island.index].world, &end_island.heightmap, cix, ciz);
+
+    scatter_chorus(&mut islands[end_island.index].world, &end_island.heightmap, ecx, ecz, er * 0.85, seed.wrapping_add(404));
+    build_floating_ring(&mut islands[end_island.index].world, ecx, ecz, er, end_island.params.top_y, seed.wrapping_add(404));
+
+    build_floating_path(&mut islands, main.index, &main.heightmap, &main.params, end_island.index, &end_island.heightmap, &end_island.params);
 
     (islands, main_center_world, r)
 }

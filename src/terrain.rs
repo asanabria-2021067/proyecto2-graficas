@@ -182,6 +182,50 @@ pub fn generate_rugged_island(seed: u32, p: &IslandParams) -> (World, Heightmap)
     (world, heightmap)
 }
 
+/// Como `generate_island`, pero con un perfil suave y redondeado (mucha
+/// menos amplitud de ruido, borde apenas deformado) para la isla del End:
+/// una loma achatada de bordes blandos en vez de colinas marcadas. Capas
+/// solo de end_stone (sin pasto/tierra/agua). No planta arboles.
+pub fn generate_soft_island(seed: u32, p: &IslandParams) -> (World, Heightmap) {
+    let (nx, ny, nz) = p.grid_dims();
+    let mut world = World::new(nx, ny, nz);
+    let perlin = Perlin::new(seed);
+    let mut top = vec![i32::MIN; (world.nx * world.nz) as usize];
+    let mut on_island = vec![false; (world.nx * world.nz) as usize];
+
+    for z in 0..world.nz {
+        for x in 0..world.nx {
+            let dx = (x - p.center_x) as f32;
+            let dz = (z - p.center_z) as f32;
+            let dist = (dx * dx + dz * dz).sqrt() / p.radius;
+
+            let edge_noise = perlin.fbm2(x as f32 * 0.035 + 300.0, z as f32 * 0.035, 3, 2.0, 0.5);
+            let dist_deformed = dist + edge_noise * 0.15; // borde mucho mas parejo que las demas islas
+            if dist_deformed >= 1.0 {
+                continue;
+            }
+
+            let height_noise = perlin.fbm2(x as f32 * 0.04, z as f32 * 0.04, 3, 2.0, 0.5);
+            let surface_y = p.top_y + (height_noise * 2.5) as i32;
+
+            let dist_norm = dist.clamp(0.0, 1.0);
+            let cone = p.max_depth * (1.0 - dist_norm).powf(1.8); // achatada: cae mas de golpe cerca del borde
+            let jag = perlin.noise3(x as f32 * 0.08, z as f32 * 0.08, 5.1);
+            let bottom_y = (p.top_y as f32 - cone - (jag * 0.5 + 0.5) * 2.0).round() as i32;
+            let bottom_y = bottom_y.max(1);
+
+            world.fill_box((x, bottom_y, z), (x, surface_y, z), block::END_STONE);
+
+            let i = (z * world.nx + x) as usize;
+            top[i] = surface_y;
+            on_island[i] = true;
+        }
+    }
+
+    let heightmap = Heightmap { nx: world.nx, nz: world.nz, top, on_island };
+    (world, heightmap)
+}
+
 fn place_trees(world: &mut World, hm: &Heightmap, p: &IslandParams, seed: u32) {
     let mut rng = Pcg32::new(seed as u64 ^ 0xA11C_E000, 0x7EE);
     let mut placed: Vec<(i32, i32)> = Vec::new();

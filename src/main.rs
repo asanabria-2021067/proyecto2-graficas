@@ -4,8 +4,11 @@ mod cli;
 mod framebuffer;
 mod image_io;
 mod intersect;
+mod material;
 mod math;
 mod render;
+mod texgen;
+mod texture;
 mod world;
 
 use raylib::prelude::*;
@@ -14,6 +17,7 @@ use camera::Camera;
 use cli::Args;
 use framebuffer::Framebuffer;
 use intersect::{traverse, Face, HitInfo};
+use material::{block, FaceTex, Material, MaterialTable};
 use math::{Ray, Vec3};
 use render::{default_thread_count, render_frame, Tracer};
 use world::World;
@@ -21,28 +25,63 @@ use world::World;
 const INTERNAL_W: u32 = 480;
 const INTERNAL_H: u32 = 270;
 
-/// Fase 2 test scene: a voxel world walked with the DDA intersector.
-/// Colors are per-face debug tints (no materials yet, esas llegan en fase 3);
-/// a UV checker overlay is mixed in to verify texture-coordinate orientation.
+/// Fase 3 test scene: voxel world + tabla de materiales real (texturas propias,
+/// specular/transparencia/reflectividad/ior distintos por bloque). La escena
+/// final del faro llega en fase 9; esto solo demuestra cada material sobre
+/// una plataforma de pasto.
 struct WorldScene<'a> {
     world: &'a World,
+    materials: &'a MaterialTable,
     night: bool,
 }
 
 fn build_test_world() -> World {
-    let mut world = World::new(20, 12, 20);
-    world.fill_box((0, 0, 0), (15, 0, 15), 1); // plataforma 16x16
-    world.fill_box((2, 1, 2), (2, 4, 2), 2); // columna
-    world.fill_box((13, 1, 2), (13, 3, 2), 3); // columna
-    world.fill_box((2, 1, 13), (2, 6, 13), 4); // columna
-    world.hollow_box((6, 1, 6), (10, 5, 10), 3); // cuarto hueco (prueba DDA con interior de aire)
+    let mut world = World::new(28, 8, 10);
+    world.fill_box((0, 0, 0), (27, 0, 9), block::GRASS);
+    let showcase = [
+        block::DIRT,
+        block::SAND,
+        block::STONE_BRICKS,
+        block::OAK_LOG,
+        block::OAK_PLANKS,
+        block::LEAVES,
+        block::WATER,
+        block::GLASS,
+        block::GLOWSTONE,
+        block::IRON_BLOCK,
+        block::LAMP_FRAME,
+    ];
+    for (i, &id) in showcase.iter().enumerate() {
+        let x = 2 + i as i32 * 2;
+        world.set(x, 1, 4, id);
+        if id == block::LAMP_FRAME {
+            world.set(x, 2, 4, block::GLOWSTONE);
+        }
+    }
     world
+}
+
+fn face_tex(mat: &Material, face: Face) -> &FaceTex {
+    match face {
+        Face::PY => &mat.top,
+        Face::NY => &mat.bottom,
+        _ => &mat.side,
+    }
 }
 
 impl Tracer for WorldScene<'_> {
     fn trace(&self, ray: Ray) -> Vec3 {
-        match traverse(self.world, ray, f32::INFINITY, |id| id != 0) {
-            Some(hit) => shade_hit(&hit, self.night),
+        let materials = self.materials;
+        let hit = traverse(self.world, ray, f32::INFINITY, |id, face, uv| match materials.get(id) {
+            Some(mat) if mat.alpha_cutout => {
+                let (_, a) = face_tex(mat, face).albedo.sample(uv.0, uv.1);
+                a > 0.5
+            }
+            Some(_) => true,
+            None => true,
+        });
+        match hit {
+            Some(hit) => shade_hit(&hit, self.materials, self.night),
             None => sky_color(ray.dir, self.night),
         }
     }
@@ -57,50 +96,28 @@ fn sky_color(dir: Vec3, night: bool) -> Vec3 {
     }
 }
 
-fn face_base_color(face: Face, block: u8) -> Vec3 {
-    let hue = match block {
-        1 => Vec3::new(0.55, 0.55, 0.55),
-        2 => Vec3::new(0.8, 0.3, 0.25),
-        3 => Vec3::new(0.3, 0.55, 0.8),
-        4 => Vec3::new(0.35, 0.75, 0.3),
-        _ => Vec3::new(0.8, 0.8, 0.8),
+fn shade_hit(hit: &HitInfo, materials: &MaterialTable, night: bool) -> Vec3 {
+    let Some(mat) = materials.get(hit.block) else {
+        return Vec3::new(1.0, 0.0, 1.0); // material faltante: magenta, para que salte a la vista
     };
-    // Slight per-face tint on top of the block hue, so adjacent faces of the
-    // same block are still visually distinguishable (matches phase-1 style).
-    let tint = match face {
-        Face::PY => 1.15,
-        Face::NY => 0.6,
-        Face::PX | Face::NZ => 1.0,
-        Face::NX | Face::PZ => 0.85,
-    };
-    (hue * tint).clamp01()
-}
+    let tex = face_tex(mat, hit.face);
+    let (albedo, _alpha) = tex.albedo.sample(hit.uv.0, hit.uv.1);
+    let albedo = albedo.mul_v(mat.tint);
 
-fn checker(uv: (f32, f32), cells: f32) -> f32 {
-    let cx = (uv.0 * cells).floor() as i32;
-    let cy = (uv.1 * cells).floor() as i32;
-    if (cx + cy) % 2 == 0 {
-        1.0
-    } else {
-        0.8
-    }
-}
-
-fn shade_hit(hit: &HitInfo, night: bool) -> Vec3 {
     let light_dir = Vec3::new(0.4, 0.8, 0.3).normalize();
-    let ndotl = hit.normal.dot(light_dir).max(0.05);
-    let base = face_base_color(hit.face, hit.block) * checker(hit.uv, 4.0);
+    let ndotl = hit.normal.dot(light_dir).max(0.0);
     let ambient = if night { 0.12 } else { 0.22 };
-    base * (ambient + (1.0 - ambient) * ndotl)
+    albedo * (ambient + (1.0 - ambient) * ndotl) + mat.emission
 }
 
 fn build_camera(args: &Args) -> Camera {
-    Camera::new(Vec3::new(8.0, 2.0, 8.0), args.yaw, args.pitch, args.dist, 5.0, 300.0, 50.0)
+    Camera::new(Vec3::new(13.0, 1.5, 4.5), args.yaw, args.pitch, args.dist, 5.0, 300.0, 50.0)
 }
 
 fn run_render_mode(args: &Args, path: &str) {
     let world = build_test_world();
-    let scene = WorldScene { world: &world, night: args.night };
+    let materials = material::build_material_table(args.seed);
+    let scene = WorldScene { world: &world, materials: &materials, night: args.night };
     let cam = build_camera(args);
     let mut fb = Framebuffer::new(args.width, args.height);
     render_frame(&mut fb, &cam, &scene, default_thread_count());
@@ -110,7 +127,8 @@ fn run_render_mode(args: &Args, path: &str) {
 
 fn run_bench_mode(args: &Args) {
     let world = build_test_world();
-    let scene = WorldScene { world: &world, night: args.night };
+    let materials = material::build_material_table(args.seed);
+    let scene = WorldScene { world: &world, materials: &materials, night: args.night };
     bench::run(&scene, args.width, args.height);
 }
 
@@ -134,6 +152,7 @@ fn run_window_mode(args: &Args) {
 
     let mut cam = build_camera(args);
     let world = build_test_world();
+    let materials = material::build_material_table(args.seed);
     let mut night = args.night;
     let mut normalmaps = !args.no_normalmaps;
     let mut quality: u8 = 2;
@@ -214,7 +233,7 @@ fn run_window_mode(args: &Args) {
         let dirty = last_state != Some(state);
 
         if dirty {
-            let scene = WorldScene { world: &world, night };
+            let scene = WorldScene { world: &world, materials: &materials, night };
             let t0 = std::time::Instant::now();
             render_frame(&mut fb, &cam, &scene, default_thread_count());
             let last_ms = t0.elapsed().as_secs_f64() * 1000.0;

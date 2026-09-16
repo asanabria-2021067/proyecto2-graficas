@@ -1,7 +1,7 @@
 // get()/resize() se usan a partir de fases posteriores (terreno, calidad adaptativa).
 #![allow(dead_code)]
 
-use crate::math::Vec3;
+use crate::math::{linear_to_srgb, Vec3};
 
 pub struct Framebuffer {
     pub width: u32,
@@ -40,9 +40,9 @@ impl Framebuffer {
 #[inline]
 pub fn linear_to_u32(c: Vec3) -> u32 {
     let c = c.clamp01();
-    let r = (c.x.powf(1.0 / 2.2) * 255.0 + 0.5) as u32;
-    let g = (c.y.powf(1.0 / 2.2) * 255.0 + 0.5) as u32;
-    let b = (c.z.powf(1.0 / 2.2) * 255.0 + 0.5) as u32;
+    let r = (linear_to_srgb(c.x) * 255.0 + 0.5) as u32;
+    let g = (linear_to_srgb(c.y) * 255.0 + 0.5) as u32;
+    let b = (linear_to_srgb(c.z) * 255.0 + 0.5) as u32;
     (r << 16) | (g << 8) | b
 }
 

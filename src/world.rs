@@ -1,3 +1,6 @@
+// hollow_box se usa a partir de fase 9 (estructuras de la escena final).
+#![allow(dead_code)]
+
 use crate::math::Vec3;
 
 /// Dense voxel grid. Block id 0 is always air. Voxel (x,y,z) occupies the

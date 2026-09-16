@@ -1,10 +1,15 @@
-//! Fase 9: "La isla del faro". Construye el faro, el lago con cascada, el
-//! muelle, la casita, dos islas satelite (monolito e jardin con fuente) y
-//! postes de luz, todo sobre el terreno procedural de fase 8, usando
-//! funciones helper relativas a la altura real del terreno para que
-//! funcionen con cualquier semilla.
+//! Fase 9 + "parte 2": "La isla del faro" y sus vecinas. Construye el faro,
+//! el lago con cascada, el muelle, la casita, dos islas satelite (monolito e
+//! jardin con fuente) y postes de luz, todo sobre el terreno procedural de
+//! fase 8, usando funciones helper relativas a la altura real del terreno
+//! para que funcionen con cualquier semilla. Desde la "parte 2" cada isla
+//! vive en su propia grilla (`Island`, ver islands.rs) en vez de compartir
+//! una grilla gigante mayormente vacia; los puentes entre islas son su
+//! propia mini-grilla tambien.
 
+use crate::islands::Island;
 use crate::material::block;
+use crate::math::Vec3;
 use crate::noise::Pcg32;
 use crate::terrain::{generate_island, Heightmap, IslandParams};
 use crate::world::World;
@@ -330,61 +335,119 @@ fn build_path_lights(world: &mut World, hm: &Heightmap, points: &[(i32, i32)]) {
     }
 }
 
+/// Construye un puente entre dos islas COMO SU PROPIA MINI-GRILLA (`Island`
+/// nueva, empujada a `islands`): encuentra el borde real de cada isla en
+/// direccion a la otra (`find_edge`, funciona con cualquier semilla), nivela
+/// un parche chico en cada isla para que la transicion no tenga escalon, y
+/// tiende una pasarela dentro de la grilla nueva que solo cubre el hueco
+/// entre ambas (mas un margen), no toda la distancia entre sus centros.
 #[allow(clippy::too_many_arguments)]
-fn build_bridge(world: &mut World, hm_a: &Heightmap, hm_b: &Heightmap, ax: i32, az: i32, bx: i32, bz: i32, water_level: i32) {
-    let angle_a_to_b = (bz - az) as f32;
-    let angle = (angle_a_to_b).atan2((bx - ax) as f32).to_degrees();
-    let edge_a = find_edge(hm_a, ax, az, angle.to_radians(), 200.0);
-    let edge_b = find_edge(hm_b, bx, bz, (angle + 180.0).to_radians(), 200.0);
-    let bridge_y = ((edge_a.2 + edge_b.2) / 2).max(water_level + 2);
+fn build_bridge(islands: &mut Vec<Island>, idx_a: usize, hm_a: &Heightmap, pa: &IslandParams, idx_b: usize, hm_b: &Heightmap, pb: &IslandParams, min_world_y: i32) {
+    let a_center_world = islands[idx_a].to_world_point(Vec3::new(pa.center_x as f32, pa.top_y as f32, pa.center_z as f32));
+    let b_center_world = islands[idx_b].to_world_point(Vec3::new(pb.center_x as f32, pb.top_y as f32, pb.center_z as f32));
+    let angle_deg = (b_center_world.z - a_center_world.z).atan2(b_center_world.x - a_center_world.x).to_degrees();
 
-    flatten_area(world, edge_a.0 - 1, edge_a.1 - 1, edge_a.0 + 1, edge_a.1 + 1, bridge_y, block::OAK_PLANKS);
-    flatten_area(world, edge_b.0 - 1, edge_b.1 - 1, edge_b.0 + 1, edge_b.1 + 1, bridge_y, block::OAK_PLANKS);
-    build_walkway(world, edge_a.0, edge_a.1, bridge_y, edge_b.0, edge_b.1, bridge_y, 2, block::OAK_PLANKS, block::OAK_LOG);
+    let edge_a = find_edge(hm_a, pa.center_x, pa.center_z, angle_deg.to_radians(), pa.radius + 200.0);
+    let edge_b = find_edge(hm_b, pb.center_x, pb.center_z, (angle_deg + 180.0).to_radians(), pb.radius + 200.0);
+
+    let edge_a_world = islands[idx_a].to_world_point(Vec3::new(edge_a.0 as f32, edge_a.2 as f32, edge_a.1 as f32));
+    let edge_b_world = islands[idx_b].to_world_point(Vec3::new(edge_b.0 as f32, edge_b.2 as f32, edge_b.1 as f32));
+    let bridge_y_world = (((edge_a_world.y + edge_b_world.y) * 0.5).round() as i32).max(min_world_y);
+
+    // Nivela un parche en cada isla (en SUS coordenadas locales) para que la
+    // transicion al puente no tenga un escalon.
+    let local_y_a = bridge_y_world - islands[idx_a].offset.1;
+    flatten_area(&mut islands[idx_a].world, edge_a.0 - 1, edge_a.1 - 1, edge_a.0 + 1, edge_a.1 + 1, local_y_a, block::OAK_PLANKS);
+    let local_y_b = bridge_y_world - islands[idx_b].offset.1;
+    flatten_area(&mut islands[idx_b].world, edge_b.0 - 1, edge_b.1 - 1, edge_b.0 + 1, edge_b.1 + 1, local_y_b, block::OAK_PLANKS);
+
+    // Grilla propia del puente: solo el hueco entre las dos islas, mas margen.
+    let margin = 4;
+    let min_x = edge_a_world.x.min(edge_b_world.x) as i32 - margin;
+    let max_x = edge_a_world.x.max(edge_b_world.x) as i32 + margin;
+    let min_z = edge_a_world.z.min(edge_b_world.z) as i32 - margin;
+    let max_z = edge_a_world.z.max(edge_b_world.z) as i32 + margin;
+    let min_y = bridge_y_world - 6;
+    let bridge_offset = (min_x, min_y, min_z);
+    let mut bridge_island = Island::new(World::new((max_x - min_x).max(4), 16, (max_z - min_z).max(4)), bridge_offset);
+
+    let local_a = bridge_island.to_local_point(edge_a_world);
+    let local_b = bridge_island.to_local_point(edge_b_world);
+    let by = bridge_y_world - min_y;
+    build_walkway(&mut bridge_island.world, local_a.x.round() as i32, local_a.z.round() as i32, by, local_b.x.round() as i32, local_b.z.round() as i32, by, 2, block::OAK_PLANKS, block::OAK_LOG);
+
+    islands.push(bridge_island);
 }
 
-/// Construye la escena completa: la isla principal con el faro, el lago y la
-/// cascada, el muelle, la casita, dos islas satelite (monolito y jardin) con
-/// sus puentes, y postes de luz a lo largo de los caminos.
-pub fn build_lighthouse_scene(world: &mut World, seed: u32) -> (Heightmap, IslandParams) {
-    let island = IslandParams::main_island(world);
-    let mut hm = generate_island(world, seed, &island);
-    let (cx, cz, r) = (island.center_x, island.center_z, island.radius);
+/// Todo lo que hace falta saber de una isla ya construida para seguir
+/// ubicando cosas relativas a ella (puentes, camara, etc).
+pub struct BuiltIsland {
+    pub index: usize,
+    pub heightmap: Heightmap,
+    pub params: IslandParams,
+}
+
+/// Genera una isla nueva, la agrega a `islands` y devuelve sus datos.
+fn spawn_island(islands: &mut Vec<Island>, seed: u32, params: IslandParams, offset: (i32, i32, i32)) -> BuiltIsland {
+    let (world, heightmap) = generate_island(seed, &params);
+    let index = islands.len();
+    islands.push(Island::new(world, offset));
+    BuiltIsland { index, heightmap, params }
+}
+
+/// Punto de mundo (x,y,z) sobre el centro de una isla ya construida.
+fn island_world_center(islands: &[Island], b: &BuiltIsland) -> Vec3 {
+    islands[b.index].to_world_point(Vec3::new(b.params.center_x as f32, b.params.top_y as f32, b.params.center_z as f32))
+}
+
+/// Construye la isla principal (el faro, el lago, la casita) y sus dos
+/// satelites (monolito y jardin) con sus puentes. Devuelve la lista de
+/// islas (cada una su propia mini-grilla) y el punto de mundo donde deberia
+/// mirar la camara para la isla principal.
+pub fn build_lighthouse_scene(seed: u32) -> (Vec<Island>, Vec3, f32) {
+    let mut islands: Vec<Island> = Vec::new();
+
+    let main = spawn_island(&mut islands, seed, IslandParams::new(42.0, 24), (0, 0, 0));
+    let (cx, cz, r) = (main.params.center_x, main.params.center_z, main.params.radius);
+    let water_level_world = main.params.water_level; // offset.y == 0 para la isla principal
 
     let (lx, lz) = polar(cx, cz, 250.0, r * 0.5);
-    clear_trees_near(world, lx, lz, 6);
-    build_lighthouse(world, &hm, lx, lz);
+    clear_trees_near(&mut islands[main.index].world, lx, lz, 6);
+    build_lighthouse(&mut islands[main.index].world, &main.heightmap, lx, lz);
 
     let (kx, kz) = polar(cx, cz, 40.0, r * 0.32);
     let lake_r = (r * 0.30) as i32;
-    build_lake_and_waterfall(world, &hm, kx, kz, lake_r, island.water_level, 40.0);
-    build_dock(world, &hm, kx, kz, lake_r, 220.0, island.water_level);
+    build_lake_and_waterfall(&mut islands[main.index].world, &main.heightmap, kx, kz, lake_r, main.params.water_level, 40.0);
+    build_dock(&mut islands[main.index].world, &main.heightmap, kx, kz, lake_r, 220.0, main.params.water_level);
 
     let (hx, hz) = polar(cx, cz, 150.0, r * 0.45);
-    clear_trees_near(world, hx, hz, 7);
-    build_house(world, &hm, hx, hz);
+    clear_trees_near(&mut islands[main.index].world, hx, hz, 7);
+    build_house(&mut islands[main.index].world, &main.heightmap, hx, hz);
 
+    let path_points = [lerp_point((lx, lz), (kx, kz), 0.33), lerp_point((lx, lz), (kx, kz), 0.66), lerp_point((kx, kz), (hx, hz), 0.33), lerp_point((kx, kz), (hx, hz), 0.66)];
+    build_path_lights(&mut islands[main.index].world, &main.heightmap, &path_points);
+
+    let main_center_world = island_world_center(&islands, &main);
     let sat_gap = 14.0;
     let sat_r = 13.0f32;
 
-    let (sax, saz) = polar(cx, cz, 250.0, r + sat_gap + sat_r);
-    let island_a = IslandParams::new(sax, saz, sat_r, island.top_y, island.water_level, sat_r * 1.8, 4);
-    let hm_a = generate_island(world, seed.wrapping_add(101), &island_a);
-    clear_trees_near(world, sax, saz, 4);
-    build_statue(world, &hm_a, sax, saz);
-    build_bridge(world, &hm, &hm_a, cx, cz, sax, saz, island.water_level);
-    hm.merge(&hm_a);
+    // Isla satelite A: monolito de iron_block pulido (refleja el faro y el cielo solo).
+    let a_offset_xz = (main_center_world.x + (250f32.to_radians().cos() * (r + sat_gap + sat_r)), main_center_world.z + (250f32.to_radians().sin() * (r + sat_gap + sat_r)));
+    let params_a = IslandParams::new(sat_r, 4);
+    let offset_a = ((a_offset_xz.0 as i32) - params_a.center_x, 0, (a_offset_xz.1 as i32) - params_a.center_z);
+    let sat_a = spawn_island(&mut islands, seed.wrapping_add(101), params_a, offset_a);
+    clear_trees_near(&mut islands[sat_a.index].world, sat_a.params.center_x, sat_a.params.center_z, 4);
+    build_statue(&mut islands[sat_a.index].world, &sat_a.heightmap, sat_a.params.center_x, sat_a.params.center_z);
+    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_a.index, &sat_a.heightmap, &sat_a.params, water_level_world + 2);
 
-    let (gx, gz) = polar(cx, cz, 70.0, r + sat_gap + sat_r);
-    let island_b = IslandParams::new(gx, gz, sat_r, island.top_y, island.water_level, sat_r * 1.8, 3);
-    let hm_b = generate_island(world, seed.wrapping_add(202), &island_b);
-    clear_trees_near(world, gx, gz, 7);
-    build_garden(world, &hm_b, gx, gz, seed);
-    build_bridge(world, &hm, &hm_b, cx, cz, gx, gz, island.water_level);
-    hm.merge(&hm_b);
+    // Isla satelite B: jardin con fuente.
+    let b_offset_xz = (main_center_world.x + (70f32.to_radians().cos() * (r + sat_gap + sat_r)), main_center_world.z + (70f32.to_radians().sin() * (r + sat_gap + sat_r)));
+    let params_b = IslandParams::new(sat_r, 3);
+    let offset_b = ((b_offset_xz.0 as i32) - params_b.center_x, 0, (b_offset_xz.1 as i32) - params_b.center_z);
+    let sat_b = spawn_island(&mut islands, seed.wrapping_add(202), params_b, offset_b);
+    clear_trees_near(&mut islands[sat_b.index].world, sat_b.params.center_x, sat_b.params.center_z, 7);
+    build_garden(&mut islands[sat_b.index].world, &sat_b.heightmap, sat_b.params.center_x, sat_b.params.center_z, seed);
+    build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_b.index, &sat_b.heightmap, &sat_b.params, water_level_world + 2);
 
-    let path_points = [lerp_point((lx, lz), (kx, kz), 0.33), lerp_point((lx, lz), (kx, kz), 0.66), lerp_point((kx, kz), (hx, hz), 0.33), lerp_point((kx, kz), (hx, hz), 0.66)];
-    build_path_lights(world, &hm, &path_points);
-
-    (hm, island)
+    (islands, main_center_world, r)
 }

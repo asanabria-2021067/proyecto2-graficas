@@ -91,9 +91,21 @@ fn generate_day_face(face: usize, perlin: &Perlin, sun_dir: Vec3) -> Texture {
             let t = (dir.y * 0.5 + 0.5).clamp(0.0, 1.0).powf(0.45);
             let mut color = Vec3::new(0.60, 0.72, 0.90).lerp(Vec3::new(0.05, 0.30, 0.75), t);
 
-            let n = perlin.fbm2(dir.x * 6.0 + 100.0, dir.z * 6.0, 5, 2.0, 0.5) * 0.5 + 0.5;
+            // Ruido fBm 3D sobre la direccion normalizada (no 2D por cara):
+            // dos texeles vecinos en la costura entre caras caen en
+            // direcciones casi identicas, asi que el ruido es continuo ahi
+            // sin ningun tratamiento especial -- y no se estira en las caras
+            // laterales como pasaba muestreando solo x/z (una de esas dos
+            // coordenadas queda casi constante ahi, la variacion real es en
+            // y, que no se usaba).
+            let n = perlin.fbm3(dir.x * 4.0 + 100.0, dir.y * 4.0, dir.z * 4.0, 5, 2.0, 0.5) * 0.5 + 0.5;
             let cloud_t = ((n - 0.45) / 0.14).clamp(0.0, 1.0);
-            let cloud = cloud_t * cloud_t * (3.0 - 2.0 * cloud_t) * dir.y.max(0.05).powf(0.3);
+            let shape = cloud_t * cloud_t * (3.0 - 2.0 * cloud_t);
+            // Banda de densidad centrada un poco por encima del horizonte:
+            // las nubes se desvanecen tanto hacia el cenit como hacia abajo,
+            // en vez de crecer con dir.y sin limite.
+            let band = (1.0 - ((dir.y - 0.12) / 0.5).abs().clamp(0.0, 1.0)).powf(1.5);
+            let cloud = shape * band;
             color = color.lerp(Vec3::new(0.99, 0.99, 1.0), cloud);
 
             let (core, glow) = disc_glow(dir, sun_pos, 0.9994, 400.0);

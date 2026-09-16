@@ -12,6 +12,7 @@ mod render;
 mod scene;
 mod shading;
 mod skybox;
+mod structures;
 mod terrain;
 mod texgen;
 mod texture;
@@ -29,19 +30,19 @@ use render::{default_thread_count, render_frame};
 use scene::{max_depth_for_quality, Scene};
 use shading::{day_environment, night_environment, Environment};
 use skybox::Skybox;
-use terrain::{generate_island, Heightmap, IslandParams};
+use structures::build_lighthouse_scene;
+use terrain::{Heightmap, IslandParams};
 use world::World;
 
 const INTERNAL_W: u32 = 480;
 const INTERNAL_H: u32 = 270;
-const WORLD_NX: i32 = 100;
-const WORLD_NY: i32 = 56;
-const WORLD_NZ: i32 = 100;
+const WORLD_NX: i32 = 160;
+const WORLD_NY: i32 = 64;
+const WORLD_NZ: i32 = 160;
 
-/// Fase 8 test scene: isla flotante procedural (heightmap fBm + mascara radial
-/// deformada + base conica irregular + arboles). La escena final del faro
-/// (fase 9) se construye encima de este terreno.
-#[allow(dead_code)] // heightmap se usa en fase 9 para ubicar estructuras
+/// Fase 9: "La isla del faro" construida sobre el terreno procedural de
+/// fase 8 (ver structures.rs).
+#[allow(dead_code)] // heightmap se usa para ubicar mas estructuras / camara
 struct WorldData {
     world: World,
     materials: MaterialTable,
@@ -54,8 +55,7 @@ struct WorldData {
 fn build_world_data(seed: u32) -> WorldData {
     let t0 = std::time::Instant::now();
     let mut world = World::new(WORLD_NX, WORLD_NY, WORLD_NZ);
-    let island = IslandParams::main_island(&world);
-    let heightmap = generate_island(&mut world, seed, &island);
+    let (heightmap, island) = build_lighthouse_scene(&mut world, seed);
     let materials = material::build_material_table(seed);
     let lights = build_light_grid(&world, &materials, 8.0);
     let gen_ms = t0.elapsed().as_secs_f64() * 1000.0;

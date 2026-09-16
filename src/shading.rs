@@ -152,6 +152,13 @@ pub fn shade_surface(hit: &HitInfo, normal: Vec3, view_dir: Vec3, world: &World,
     color + mat.emission
 }
 
+/// Beer-Lambert attenuation for light travelling `distance` through a medium
+/// with the given per-channel absorption coefficient.
+#[inline]
+pub fn beer_lambert(absorption: Vec3, distance: f32) -> Vec3 {
+    Vec3::new((-absorption.x * distance).exp(), (-absorption.y * distance).exp(), (-absorption.z * distance).exp())
+}
+
 #[inline]
 fn aces_channel(x: f32) -> f32 {
     let (a, b, c, d, e) = (2.51, 0.03, 2.43, 0.59, 0.14);

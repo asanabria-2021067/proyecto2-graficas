@@ -8,6 +8,7 @@ mod lights;
 mod material;
 mod math;
 mod render;
+mod scene;
 mod shading;
 mod texgen;
 mod texture;
@@ -18,28 +19,21 @@ use raylib::prelude::*;
 use camera::Camera;
 use cli::Args;
 use framebuffer::Framebuffer;
-use intersect::traverse;
-use lights::{build_light_grid, LightGrid};
-use material::{block, MaterialTable};
-use math::{Ray, Vec3};
-use render::{default_thread_count, render_frame, Tracer};
-use shading::{aces_tonemap, day_environment, is_visible, night_environment, shade_surface, Environment};
+use lights::build_light_grid;
+use material::block;
+use math::Vec3;
+use render::{default_thread_count, render_frame};
+use scene::{max_depth_for_quality, Scene};
+use shading::{day_environment, night_environment, Environment};
 use world::World;
 
 const INTERNAL_W: u32 = 480;
 const INTERNAL_H: u32 = 270;
 
-/// Fase 4 test scene: materiales de fase 3 + una pared que proyecta sombra del
-/// sol y un par de lamparas de glowstone para probar luces puntuales de
-/// noche. La escena final del faro llega en fase 9.
-struct WorldScene<'a> {
-    world: &'a World,
-    materials: &'a MaterialTable,
-    lights: &'a LightGrid,
-    env: Environment,
-    night: bool,
-}
-
+/// Fase 5 test scene: fase 4 (materiales + pared con sombra + lamparas de
+/// noche) mas un estanque de agua sobre arena para ver la refraccion del
+/// fondo y el vidrio/hierro de la vitrina para ver reflexion. La escena
+/// final del faro llega en fase 9.
 fn build_test_world() -> World {
     let mut world = World::new(28, 10, 14);
     world.fill_box((0, 0, 0), (27, 0, 13), block::GRASS);
@@ -74,27 +68,14 @@ fn build_test_world() -> World {
         world.set(x, 4, 11, block::GLOWSTONE);
     }
 
+    // Estanque de agua sobre arena: refraccion del fondo visible a traves del agua.
+    world.fill_box((6, 0, 1), (10, 0, 3), block::SAND);
+    world.fill_box((6, 1, 1), (10, 1, 3), block::WATER);
+
     world
 }
 
-impl Tracer for WorldScene<'_> {
-    fn trace(&self, ray: Ray) -> Vec3 {
-        aces_tonemap(self.trace_raw(ray))
-    }
-}
-
-impl WorldScene<'_> {
-    fn trace_raw(&self, ray: Ray) -> Vec3 {
-        let materials = self.materials;
-        let hit = traverse(self.world, ray, f32::INFINITY, |id, face, uv| is_visible(materials, id, face, uv));
-        match hit {
-            Some(hit) => shade_surface(&hit, hit.normal, -ray.dir, self.world, self.materials, self.lights, &self.env),
-            None => sky_color(ray.dir, self.night),
-        }
-    }
-}
-
-fn sky_color(dir: Vec3, night: bool) -> Vec3 {
+pub fn sky_color(dir: Vec3, night: bool) -> Vec3 {
     let t = (dir.y * 0.5 + 0.5).clamp(0.0, 1.0);
     let (bottom, top) = if night {
         (Vec3::new(0.02, 0.02, 0.05), Vec3::new(0.05, 0.06, 0.16))
@@ -120,7 +101,7 @@ fn run_render_mode(args: &Args, path: &str) {
     let world = build_test_world();
     let materials = material::build_material_table(args.seed);
     let light_grid = build_light_grid(&world, &materials, 6.0);
-    let scene = WorldScene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(args.night), night: args.night };
+    let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(args.night), night: args.night, max_depth: max_depth_for_quality(3) };
     let cam = build_camera(args);
     let mut fb = Framebuffer::new(args.width, args.height);
     render_frame(&mut fb, &cam, &scene, default_thread_count());
@@ -132,7 +113,7 @@ fn run_bench_mode(args: &Args) {
     let world = build_test_world();
     let materials = material::build_material_table(args.seed);
     let light_grid = build_light_grid(&world, &materials, 6.0);
-    let scene = WorldScene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(args.night), night: args.night };
+    let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(args.night), night: args.night, max_depth: max_depth_for_quality(2) };
     bench::run(&scene, args.width, args.height);
 }
 
@@ -238,7 +219,7 @@ fn run_window_mode(args: &Args) {
         let dirty = last_state != Some(state);
 
         if dirty {
-            let scene = WorldScene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(night), night };
+            let scene = Scene { world: &world, materials: &materials, lights: &light_grid, env: environment_for(night), night, max_depth: max_depth_for_quality(quality) };
             let t0 = std::time::Instant::now();
             render_frame(&mut fb, &cam, &scene, default_thread_count());
             let last_ms = t0.elapsed().as_secs_f64() * 1000.0;

@@ -47,28 +47,6 @@ impl Framebuffer {
         }
     }
 
-    /// Box-downsamples `self` (must be exactly `dst` at 2x width/height) into
-    /// `dst`: the optional 2x2 supersample pass on the settled frame.
-    pub fn downsample_2x2_into(&self, dst: &mut Framebuffer) {
-        debug_assert_eq!(self.width, dst.width * 2);
-        debug_assert_eq!(self.height, dst.height * 2);
-        for y in 0..dst.height {
-            for x in 0..dst.width {
-                let mut r = 0u32;
-                let mut g = 0u32;
-                let mut b = 0u32;
-                for dy in 0..2 {
-                    for dx in 0..2 {
-                        let (rr, gg, bb) = u32_to_rgb(self.get(x * 2 + dx, y * 2 + dy));
-                        r += rr as u32;
-                        g += gg as u32;
-                        b += bb as u32;
-                    }
-                }
-                dst.set(x, y, ((r / 4) << 16) | ((g / 4) << 8) | (b / 4));
-            }
-        }
-    }
 }
 
 /// Linear color [0,1] -> gamma-corrected 0x00RRGGBB.

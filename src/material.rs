@@ -157,8 +157,8 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     leaves.alpha_cutout = true;
     entries[block::LEAVES as usize] = Some(leaves);
 
-    let mut water = Material::uniform("water", seed, MatParams { specular_coef: 0.6, specular_exp: 90.0, transparency: 0.85, reflectivity: 0.08, ior: 1.33, emission: Vec3::zero() });
-    water.absorption = Vec3::new(0.35, 0.12, 0.08);
+    let mut water = Material::uniform("water", seed, MatParams { specular_coef: 0.6, specular_exp: 90.0, transparency: 0.85, reflectivity: 0.15, ior: 1.33, emission: Vec3::zero() });
+    water.absorption = Vec3::new(0.22, 0.07, 0.04);
     entries[block::WATER as usize] = Some(water);
 
     let glass = Material::uniform("glass", seed, MatParams { specular_coef: 0.6, specular_exp: 120.0, transparency: 0.92, reflectivity: 0.06, ior: 1.5, emission: Vec3::zero() });

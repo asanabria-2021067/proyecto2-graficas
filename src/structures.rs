@@ -37,6 +37,27 @@ pub fn place_pillar(world: &mut World, x: i32, z: i32, y0: i32, y1: i32, id: u8)
     world.fill_box((x, y0, z), (x, y1, z), id);
 }
 
+/// Quita troncos y hojas en un radio alrededor de (cx,cz), en toda la altura
+/// de la isla. Se llama antes de construir cada edificio para que los
+/// arboles no queden pegados/encimados con las estructuras.
+fn clear_trees_near(world: &mut World, cx: i32, cz: i32, radius: i32) {
+    for dz in -radius..=radius {
+        for dx in -radius..=radius {
+            if dx * dx + dz * dz > radius * radius {
+                continue;
+            }
+            let x = cx + dx;
+            let z = cz + dz;
+            for y in 0..world.ny {
+                let id = world.get(x, y, z);
+                if id == block::OAK_LOG || id == block::LEAVES {
+                    world.set(x, y, z, block::AIR);
+                }
+            }
+        }
+    }
+}
+
 /// Escalera ascendente de `steps` escalones de `width` bloques de ancho,
 /// avanzando en la direccion (step_dx,step_dz) y subiendo 1 bloque por escalon.
 #[allow(clippy::too_many_arguments)]
@@ -74,8 +95,8 @@ fn find_edge(hm: &Heightmap, cx: i32, cz: i32, angle_rad: f32, max_r: f32) -> (i
 }
 
 /// Camino de tablones de `width` bloques entre dos puntos (con postes de
-/// tronco cada 4 bloques a los lados), usado tanto para el muelle como para
-/// los puentes entre islas.
+/// tronco de 3 de alto cada 2 bloques a los lados, como baranda), usado
+/// tanto para el muelle como para los puentes entre islas.
 #[allow(clippy::too_many_arguments)]
 pub fn build_walkway(world: &mut World, x0: i32, z0: i32, y0: i32, x1: i32, z1: i32, y1: i32, width: i32, deck_id: u8, post_id: u8) {
     let dx = x1 - x0;
@@ -96,12 +117,12 @@ pub fn build_walkway(world: &mut World, x0: i32, z0: i32, y0: i32, x1: i32, z1: 
             let wz = (cz + pz * off).round() as i32;
             world.set(wx, y, wz, deck_id);
         }
-        if i % 4 == 0 {
+        if i % 2 == 0 {
             let off = (width as f32 - 1.0) / 2.0 + 0.5;
             for sign in [-1.0f32, 1.0] {
                 let wx = (cx + px * off * sign).round() as i32;
                 let wz = (cz + pz * off * sign).round() as i32;
-                world.fill_box((wx, y + 1, wz), (wx, y + 2, wz), post_id);
+                world.fill_box((wx, y + 1, wz), (wx, y + 3, wz), post_id);
             }
         }
     }
@@ -137,7 +158,8 @@ fn build_lighthouse(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
 fn build_lake_and_waterfall(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, radius: i32, water_level: i32, outward_angle_deg: f32) {
     for dz in -radius..=radius {
         for dx in -radius..=radius {
-            if dx * dx + dz * dz > radius * radius {
+            let dist2 = dx * dx + dz * dz;
+            if dist2 > radius * radius {
                 continue;
             }
             let x = cx + dx;
@@ -146,7 +168,12 @@ fn build_lake_and_waterfall(world: &mut World, hm: &Heightmap, cx: i32, cz: i32,
             if top > water_level {
                 world.fill_box((x, water_level + 1, z), (x, top, z), block::AIR);
             }
-            let bed_y = (water_level - 1).min(top);
+            // Fondo en forma de cuenco: mas hondo en el centro (hasta 3
+            // bloques), se va achicando hacia la orilla, para que el lago se
+            // lea como un cuerpo de agua real y no un charco de un bloque.
+            let dist_norm = (dist2 as f32).sqrt() / radius as f32;
+            let bowl_depth = ((1.0 - dist_norm) * 3.0) as i32;
+            let bed_y = (water_level - 1 - bowl_depth).min(top);
             world.set(x, bed_y, z, block::SAND);
             world.fill_box((x, bed_y + 1, z), (x, water_level, z), block::WATER);
         }
@@ -218,28 +245,37 @@ fn build_dock(world: &mut World, hm: &Heightmap, lake_cx: i32, lake_cz: i32, lak
 
 fn build_house(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
     let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
-    flatten_area(world, cx - 3, cz - 3, cx + 3, cz + 3, base_y, block::GRASS);
+    flatten_area(world, cx - 5, cz - 5, cx + 5, cz + 5, base_y, block::GRASS);
 
-    let h = 4;
+    let h = 6;
+    let r = 4; // medio-footprint: casa de 9x9
     let y0 = base_y + 1;
-    let corners = [(-2, -2), (2, -2), (-2, 2), (2, 2)];
+    let corners = [(-r, -r), (r, -r), (-r, r), (r, r)];
 
-    world.hollow_box((cx - 2, y0, cz - 2), (cx + 2, y0 + h - 1, cz + 2), block::OAK_PLANKS);
+    world.hollow_box((cx - r, y0, cz - r), (cx + r, y0 + h - 1, cz + r), block::OAK_PLANKS);
     for &(dx, dz) in &corners {
         place_pillar(world, cx + dx, cz + dz, y0, y0 + h - 1, block::OAK_LOG);
     }
 
-    world.set(cx, y0 + 1, cz - 2, block::GLASS);
-    world.set(cx, y0 + 1, cz + 2, block::GLASS);
-    world.set(cx - 2, y0 + 1, cz, block::GLASS);
-    world.set(cx, y0, cz + 2, block::AIR); // puerta
-    world.set(cx, y0 + 1, cz, block::GLOWSTONE); // lampara interior, se ve por las ventanas de noche
+    // Dos ventanas por lado (salvo el lado de la puerta) para que se lea
+    // grande y con mas detalle; puerta de doble alto en el frente (+z).
+    for &off in &[-2, 2] {
+        world.set(cx + off, y0 + 1, cz - r, block::GLASS);
+        world.set(cx + off, y0 + 2, cz - r, block::GLASS);
+        world.set(cx - r, y0 + 1, cz + off, block::GLASS);
+        world.set(cx - r, y0 + 2, cz + off, block::GLASS);
+        world.set(cx + r, y0 + 1, cz + off, block::GLASS);
+        world.set(cx + r, y0 + 2, cz + off, block::GLASS);
+    }
+    world.fill_box((cx, y0, cz + r), (cx, y0 + 1, cz + r), block::AIR); // puerta
+    world.set(cx, y0 + 2, cz, block::GLOWSTONE); // lampara interior, se ve por las ventanas de noche
+    world.set(cx - 1, y0 + 2, cz, block::GLOWSTONE);
 
     let roof_y = y0 + h;
-    for (layer, inset) in [(0, 0), (1, 1), (2, 2)] {
-        world.fill_box((cx - 2 + inset, roof_y + layer, cz - 2 + inset), (cx + 2 - inset, roof_y + layer, cz + 2 - inset), block::OAK_PLANKS);
+    for (layer, inset) in [(0, 0), (1, 1), (2, 2), (3, 3)] {
+        world.fill_box((cx - r + inset, roof_y + layer, cz - r + inset), (cx + r - inset, roof_y + layer, cz + r - inset), block::OAK_PLANKS);
     }
-    world.set(cx, roof_y + 3, cz, block::OAK_PLANKS);
+    world.set(cx, roof_y + 4, cz, block::OAK_PLANKS);
 }
 
 fn build_statue(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
@@ -316,14 +352,16 @@ pub fn build_lighthouse_scene(world: &mut World, seed: u32) -> (Heightmap, Islan
     let (cx, cz, r) = (island.center_x, island.center_z, island.radius);
 
     let (lx, lz) = polar(cx, cz, 250.0, r * 0.5);
+    clear_trees_near(world, lx, lz, 6);
     build_lighthouse(world, &hm, lx, lz);
 
     let (kx, kz) = polar(cx, cz, 40.0, r * 0.32);
-    let lake_r = (r * 0.22) as i32;
+    let lake_r = (r * 0.30) as i32;
     build_lake_and_waterfall(world, &hm, kx, kz, lake_r, island.water_level, 40.0);
     build_dock(world, &hm, kx, kz, lake_r, 220.0, island.water_level);
 
     let (hx, hz) = polar(cx, cz, 150.0, r * 0.45);
+    clear_trees_near(world, hx, hz, 7);
     build_house(world, &hm, hx, hz);
 
     let sat_gap = 14.0;
@@ -332,6 +370,7 @@ pub fn build_lighthouse_scene(world: &mut World, seed: u32) -> (Heightmap, Islan
     let (sax, saz) = polar(cx, cz, 250.0, r + sat_gap + sat_r);
     let island_a = IslandParams::new(sax, saz, sat_r, island.top_y, island.water_level, sat_r * 1.8, 4);
     let hm_a = generate_island(world, seed.wrapping_add(101), &island_a);
+    clear_trees_near(world, sax, saz, 4);
     build_statue(world, &hm_a, sax, saz);
     build_bridge(world, &hm, &hm_a, cx, cz, sax, saz, island.water_level);
     hm.merge(&hm_a);
@@ -339,6 +378,7 @@ pub fn build_lighthouse_scene(world: &mut World, seed: u32) -> (Heightmap, Islan
     let (gx, gz) = polar(cx, cz, 70.0, r + sat_gap + sat_r);
     let island_b = IslandParams::new(gx, gz, sat_r, island.top_y, island.water_level, sat_r * 1.8, 3);
     let hm_b = generate_island(world, seed.wrapping_add(202), &island_b);
+    clear_trees_near(world, gx, gz, 7);
     build_garden(world, &hm_b, gx, gz, seed);
     build_bridge(world, &hm, &hm_b, cx, cz, gx, gz, island.water_level);
     hm.merge(&hm_b);

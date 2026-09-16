@@ -1,8 +1,8 @@
-use crate::intersect::{traverse, Face, HitInfo};
+use crate::intersect::{Face, HitInfo};
+use crate::islands::{traverse_islands, Island};
 use crate::lights::LightGrid;
 use crate::material::{FaceTex, Material, MaterialTable};
 use crate::math::{Ray, Vec3};
-use crate::world::World;
 
 pub const MAX_LIGHTS_PER_POINT: usize = 4;
 const SHADOW_MAX_DIST: f32 = 256.0;
@@ -95,7 +95,7 @@ pub fn is_visible(materials: &MaterialTable, id: u8, face: Face, uv: (f32, f32))
 /// glass) attenuating the light by their transparency and color; leaves use
 /// their alpha cutout directly via the traverse predicate. Fully opaque
 /// surfaces block the light outright.
-fn shadow_transmittance(world: &World, materials: &MaterialTable, origin: Vec3, dir: Vec3, max_dist: f32) -> Vec3 {
+fn shadow_transmittance(islands: &[Island], materials: &MaterialTable, origin: Vec3, dir: Vec3, max_dist: f32) -> Vec3 {
     let mut transmittance = Vec3::splat(1.0);
     let mut traveled = 0.0f32;
     let mut current = origin;
@@ -106,7 +106,7 @@ fn shadow_transmittance(world: &World, materials: &MaterialTable, origin: Vec3, 
             break;
         }
         let ray = Ray::new(current, dir);
-        let hit = traverse(world, ray, remaining, |id, face, uv| is_visible(materials, id, face, uv));
+        let hit = traverse_islands(islands, ray, remaining, |id, face, uv| is_visible(materials, id, face, uv));
         let Some(hit) = hit else { break };
         let Some(mat) = materials.get(hit.block) else {
             return Vec3::zero();
@@ -128,7 +128,7 @@ fn shadow_transmittance(world: &World, materials: &MaterialTable, origin: Vec3, 
 /// material's own emission (never shadowed). Returns raw HDR linear color;
 /// tone mapping happens once at the top of the recursive trace.
 #[allow(clippy::too_many_arguments)]
-pub fn shade_surface(hit: &HitInfo, normal: Vec3, view_dir: Vec3, world: &World, materials: &MaterialTable, lights: &LightGrid, env: &Environment) -> Vec3 {
+pub fn shade_surface(hit: &HitInfo, normal: Vec3, view_dir: Vec3, islands: &[Island], materials: &MaterialTable, lights: &LightGrid, env: &Environment) -> Vec3 {
     let Some(mat) = materials.get(hit.block) else {
         return Vec3::new(1.0, 0.0, 1.0);
     };
@@ -142,7 +142,7 @@ pub fn shade_surface(hit: &HitInfo, normal: Vec3, view_dir: Vec3, world: &World,
     let ndotl = normal.dot(l_sun).max(0.0);
     if ndotl > 0.0 {
         let origin = hit.point + normal * SHADOW_EPS;
-        let trans = shadow_transmittance(world, materials, origin, l_sun, SHADOW_MAX_DIST);
+        let trans = shadow_transmittance(islands, materials, origin, l_sun, SHADOW_MAX_DIST);
         if trans.max_component() > 0.001 {
             let diffuse = albedo * ndotl;
             let half = (l_sun + view_dir).normalize();
@@ -171,7 +171,7 @@ pub fn shade_surface(hit: &HitInfo, normal: Vec3, view_dir: Vec3, world: &World,
             continue;
         }
         let origin = hit.point + normal * SHADOW_EPS;
-        let trans = shadow_transmittance(world, materials, origin, l, dist - SHADOW_EPS);
+        let trans = shadow_transmittance(islands, materials, origin, l, dist - SHADOW_EPS);
         if trans.max_component() <= 0.001 {
             continue;
         }

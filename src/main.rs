@@ -4,6 +4,7 @@ mod cli;
 mod framebuffer;
 mod image_io;
 mod intersect;
+mod islands;
 mod lights;
 mod material;
 mod math;
@@ -23,6 +24,7 @@ use raylib::prelude::*;
 use camera::Camera;
 use cli::Args;
 use framebuffer::Framebuffer;
+use islands::Island;
 use lights::{build_light_grid, LightGrid};
 use material::MaterialTable;
 use math::Vec3;
@@ -31,41 +33,33 @@ use scene::{max_depth_for_quality, Scene};
 use shading::{day_environment, night_environment, Environment};
 use skybox::Skybox;
 use structures::build_lighthouse_scene;
-use terrain::{Heightmap, IslandParams};
-use world::World;
 
 const MIN_WINDOW_W: u32 = 1280;
 const MIN_WINDOW_H: u32 = 720;
-const WORLD_NX: i32 = 160;
-const WORLD_NY: i32 = 64;
-const WORLD_NZ: i32 = 160;
 
-/// Fase 9: "La isla del faro" construida sobre el terreno procedural de
-/// fase 8 (ver structures.rs).
-#[allow(dead_code)] // heightmap se usa para ubicar mas estructuras / camara
+/// Fase 9 + "parte 2": "La isla del faro" y vecinas, cada una su propia
+/// mini-grilla (`Island`, ver islands.rs) en vez de una grilla gigante
+/// compartida (ver structures.rs).
 struct WorldData {
-    world: World,
+    islands: Vec<Island>,
     materials: MaterialTable,
     lights: LightGrid,
-    heightmap: Heightmap,
-    island: IslandParams,
+    main_center: Vec3,
+    main_radius: f32,
     gen_ms: f64,
 }
 
 fn build_world_data(seed: u32) -> WorldData {
     let t0 = std::time::Instant::now();
-    let mut world = World::new(WORLD_NX, WORLD_NY, WORLD_NZ);
-    let (heightmap, island) = build_lighthouse_scene(&mut world, seed);
+    let (islands, main_center, main_radius) = build_lighthouse_scene(seed);
     let materials = material::build_material_table(seed);
-    let lights = build_light_grid(&world, &materials, 8.0);
+    let lights = build_light_grid(&islands, &materials, 8.0);
     let gen_ms = t0.elapsed().as_secs_f64() * 1000.0;
-    WorldData { world, materials, lights, heightmap, island, gen_ms }
+    WorldData { islands, materials, lights, main_center, main_radius, gen_ms }
 }
 
 fn build_camera(args: &Args, wd: &WorldData) -> Camera {
-    let center = Vec3::new(wd.island.center_x as f32, wd.island.top_y as f32, wd.island.center_z as f32);
-    let radius = wd.island.radius;
-    Camera::new(center, args.yaw, args.pitch, args.dist, radius * 0.6, radius * 8.0, 50.0)
+    Camera::new(wd.main_center, args.yaw, args.pitch, args.dist, wd.main_radius * 0.6, wd.main_radius * 8.0, 50.0)
 }
 
 fn environment_for(night: bool) -> Environment {
@@ -85,7 +79,7 @@ fn run_render_mode(args: &Args, path: &str) {
     println!("terreno generado en {:.2} ms (semilla {})", wd.gen_ms, args.seed);
     let skybox = build_skybox(args.seed);
     let scene = Scene {
-        world: &wd.world,
+        islands: &wd.islands,
         materials: &wd.materials,
         lights: &wd.lights,
         skybox: &skybox,
@@ -105,7 +99,7 @@ fn run_bench_mode(args: &Args) {
     let wd = build_world_data(args.seed);
     let skybox = build_skybox(args.seed);
     let scene = Scene {
-        world: &wd.world,
+        islands: &wd.islands,
         materials: &wd.materials,
         lights: &wd.lights,
         skybox: &skybox,
@@ -114,8 +108,7 @@ fn run_bench_mode(args: &Args) {
         max_depth: max_depth_for_quality(2),
         normalmaps: !args.no_normalmaps,
     };
-    let center = Vec3::new(wd.island.center_x as f32, wd.island.top_y as f32, wd.island.center_z as f32);
-    bench::run(&scene, args.width, args.height, center, wd.island.radius * 2.0);
+    bench::run(&scene, args.width, args.height, wd.main_center, wd.main_radius * 2.0);
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -270,7 +263,7 @@ fn run_window_mode(args: &Args) {
 
         if dirty {
             let scene = Scene {
-                world: &wd.world,
+                islands: &wd.islands,
                 materials: &wd.materials,
                 lights: &wd.lights,
                 skybox: &skybox,

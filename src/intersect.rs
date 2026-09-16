@@ -51,8 +51,10 @@ pub struct HitInfo {
     pub voxel: (i32, i32, i32),
 }
 
-/// Ray vs world AABB, slab method. Returns (t_enter, t_exit) clamped so t_enter >= 0.
-fn intersect_aabb(ray: Ray, bmin: Vec3, bmax: Vec3) -> Option<(f32, f32)> {
+/// Ray vs box AABB, slab method. Returns (t_enter, t_exit) clamped so t_enter >= 0.
+/// `pub(crate)` porque islands.rs tambien la usa para ordenar candidatos por
+/// t de entrada antes de hacer DDA en cada isla.
+pub(crate) fn intersect_aabb(ray: Ray, bmin: Vec3, bmax: Vec3) -> Option<(f32, f32)> {
     let o = [ray.origin.x, ray.origin.y, ray.origin.z];
     let d = [ray.dir.x, ray.dir.y, ray.dir.z];
     let lo = [bmin.x, bmin.y, bmin.z];

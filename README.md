@@ -1,5 +1,18 @@
 # El archipielago del faro
 
+<!--
+  VIDEO: pegar aca el link/embed una vez grabado (ver record.md para
+  generar los cuadros con `--record` y unirlos con ffmpeg en diorama.mp4).
+
+  - Si lo subis a YouTube (podes dejarlo "no listado"), reemplaza VIDEO_ID
+    y pega esto tal cual:
+    [![Video del diorama](https://img.youtube.com/vi/VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=VIDEO_ID)
+
+  - Si es un archivo (GitHub Releases, Drive, etc.) o preferis solo un
+    link de texto, alcanza con:
+    [Ver video](URL_DEL_VIDEO)
+-->
+
 Diorama estilo Minecraft renderizado 100% con raytracing en CPU, escrito en
 Rust desde cero (sin librerias externas para la logica: matematica,
 texturas, ruido, PRNG, paralelismo y raytracing son todo codigo propio).
@@ -11,10 +24,6 @@ una isla del End con una ciudad de torres de purpur, unidas por puentes de
 verdad (tablero ancho, barandas, arcos o cables, linternas).
 
 ![Vista general de las 5 islas](renders/before_after/p6_final_general_day.png)
-
-## Video
-
-<!-- VIDEO AQUÍ -->
 
 ## Requisitos
 

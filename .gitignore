@@ -1,3 +1,42 @@
 /target
 *.md
 !README.md
+
+# Renders de verificacion sueltos (before/after de cada parte, capturas de
+# depuracion). Solo quedan versionados los que arma el README a mano en
+# renders/gallery_*.png y renders/before_after/<los que el README enlaza>.
+renders/before_after/*
+!renders/before_after/after_day.png
+!renders/before_after/after_night.png
+!renders/before_after/before_day.png
+!renders/before_after/before_night.png
+!renders/before_after/p6_final_bridges.png
+!renders/before_after/p6_final_end_city.png
+!renders/before_after/p6_final_general_day.png
+!renders/before_after/p6_final_general_night.png
+!renders/before_after/p6_final_lake.png
+!renders/before_after/p6_final_nether_night.png
+!renders/before_after/part2_day.png
+!renders/before_after/part2_night.png
+!renders/before_after/part3_nether_final_day.png
+!renders/before_after/part3_nether_final_night.png
+!renders/before_after/part3_overview_day.png
+!renders/before_after/part4_end_close_day.png
+!renders/before_after/part4_overview_day.png
+!renders/before_after/part4_overview_night.png
+
+# Idem para las capturas de verificacion sueltas de las fases 1-9 (directo
+# en renders/, no en before_after/): solo quedan versionadas las que usa el
+# README (renders/gallery_*.png).
+renders/*.png
+!renders/gallery_1_hero_day.png
+!renders/gallery_1_hero_night.png
+!renders/gallery_2_waterfall_day.png
+!renders/gallery_2_waterfall_night.png
+!renders/gallery_3_garden_day.png
+!renders/gallery_3_garden_night.png
+!renders/gallery_4_lighthouse_day.png
+!renders/gallery_4_lighthouse_night.png
+
+# Modo de grabacion offline (--record): cientos/miles de PNGs, no se versionan.
+frames/

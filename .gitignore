@@ -1,6 +1,7 @@
 /target
 *.md
 !README.md
+!record.md
 
 # Renders de verificacion sueltos (before/after de cada parte, capturas de
 # depuracion). Solo quedan versionados los que arma el README a mano en

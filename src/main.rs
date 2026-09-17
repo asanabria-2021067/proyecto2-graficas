@@ -9,6 +9,7 @@ mod lights;
 mod material;
 mod math;
 mod noise;
+mod record;
 mod render;
 mod scene;
 mod shading;
@@ -28,7 +29,7 @@ use islands::Island;
 use lights::{build_light_grid, LightGrid};
 use material::MaterialTable;
 use math::Vec3;
-use render::{default_thread_count, render_frame, rotated_grid_3x3, Progressive, SAMPLES_2X2};
+use render::{default_thread_count, render_frame, render_frame_ms, rotated_grid_3x3, Progressive, SAMPLES_2X2};
 use scene::{max_depth_for_quality, Scene};
 use shading::{day_environment, night_environment, Environment};
 use skybox::Skybox;
@@ -147,6 +148,137 @@ fn run_bench_aa_mode(args: &Args) {
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         println!("  pasada {pass}: {ms:.1} ms");
     }
+}
+
+/// Todo lo que un cuadro de `--record` necesita para renderizarse, agrupado
+/// para no pasar 8+ argumentos sueltos entre `render_single` y quien la llama.
+struct RecordCtx<'a> {
+    wd: &'a WorldData,
+    skybox: &'a Skybox,
+    cam: &'a Camera,
+    quality: u8,
+    threads: usize,
+}
+
+fn render_single(ctx: &RecordCtx, night: bool, normalmaps: bool, fb: &mut Framebuffer) {
+    let scene = Scene {
+        islands: &ctx.wd.islands,
+        materials: &ctx.wd.materials,
+        lights: &ctx.wd.lights,
+        skybox: ctx.skybox,
+        env: environment_for(night),
+        night,
+        max_depth: max_depth_for_quality(ctx.quality),
+        normalmaps,
+    };
+    render_frame_ms(fb, ctx.cam, &scene, ctx.threads, &settle_samples(ctx.quality));
+}
+
+fn blend_framebuffers(a: &Framebuffer, b: &Framebuffer, f: f32, out: &mut Framebuffer) {
+    let lerp8 = |x: u8, y: u8| -> u8 { (x as f32 + (y as f32 - x as f32) * f).round() as u8 };
+    for i in 0..out.pixels.len() {
+        let (ar, ag, ab) = framebuffer::u32_to_rgb(a.pixels[i]);
+        let (br, bg, bb) = framebuffer::u32_to_rgb(b.pixels[i]);
+        let (r, g, bl) = (lerp8(ar, br) as u32, lerp8(ag, bg) as u32, lerp8(ab, bb) as u32);
+        out.pixels[i] = (r << 16) | (g << 8) | bl;
+    }
+}
+
+/// Un cuadro de `--record`: si `night_blend`/`normalmaps_blend` caen justo
+/// en 0 o 1 es un render normal; si uno de los dos esta a medio camino (una
+/// transicion dia/noche o el toggle de normal maps del guion), renderiza los
+/// dos estados extremos en buffers aparte y mezcla los pixeles ya en sRGB --
+/// un crossfade visual, no una interpolacion fisica del shading, pero
+/// alcanza para una transicion de camara de unos pocos segundos. El guion
+/// nunca mueve los dos blends a la vez, asi que no hace falta contemplar la
+/// combinacion de 4 estados.
+fn render_record_frame(ctx: &RecordCtx, night_blend: f32, normalmaps_blend: f32, fb: &mut Framebuffer, tmp_a: &mut Framebuffer, tmp_b: &mut Framebuffer) {
+    const EPS: f32 = 0.001;
+    let fractional = |x: f32| x > EPS && x < 1.0 - EPS;
+    if fractional(night_blend) {
+        render_single(ctx, false, normalmaps_blend > 0.5, tmp_a);
+        render_single(ctx, true, normalmaps_blend > 0.5, tmp_b);
+        blend_framebuffers(tmp_a, tmp_b, night_blend, fb);
+    } else if fractional(normalmaps_blend) {
+        render_single(ctx, night_blend > 0.5, false, tmp_a);
+        render_single(ctx, night_blend > 0.5, true, tmp_b);
+        blend_framebuffers(tmp_a, tmp_b, normalmaps_blend, fb);
+    } else {
+        render_single(ctx, night_blend > 0.5, normalmaps_blend > 0.5, fb);
+    }
+}
+
+/// `--record <dir>`: recorrido de camara offline (`record::timeline`) a
+/// maxima calidad, un PNG por cuadro (`frame_00001.png`, ...), sin ventana.
+/// Reanudable: un cuadro cuyo PNG ya existe se saltea sin volver a
+/// renderizarlo. Cada cuadro es un render completo (SSAA segun `--quality`,
+/// sin el refinamiento progresivo del modo ventana -- ahi progresivo tiene
+/// sentido porque el usuario esta mirando en vivo, aca no hay nadie mirando
+/// entre cuadros).
+fn run_record_mode(args: &Args, dir: &str) {
+    std::fs::create_dir_all(dir).expect("no se pudo crear el directorio de frames");
+
+    let seed_a = args.seed;
+    let seed_b = seed_a.wrapping_add(4242);
+    let seed_c = seed_a.wrapping_add(9191);
+    let kfs = record::timeline(seed_a, seed_b, seed_c);
+    let duration = record::total_duration(&kfs);
+    // +1 para que el ULTIMO cuadro caiga exactamente en `duration` (el
+    // ultimo keyframe del guion) -- con solo `round(duration*fps)` cuadros
+    // (indices 0..N-1) el tiempo maximo alcanzable es (N-1)/fps, siempre un
+    // toque antes de `duration`, y el estado/caption final del guion nunca
+    // llegaba a aparecer en ningun cuadro.
+    let total_frames = (duration * args.fps as f32).round().max(1.0) as u32 + 1;
+    let threads = default_thread_count();
+
+    println!("--record: {dir}/ {}x{} @{}fps calidad={} -- {duration:.1}s ({total_frames} cuadros)", args.width, args.height, args.fps, args.quality);
+
+    let mut wd = build_world_data(seed_a);
+    let mut skybox = build_skybox(seed_a);
+    let mut current_seed = seed_a;
+
+    let mut fb = Framebuffer::new(args.width, args.height);
+    let mut tmp_a = Framebuffer::new(args.width, args.height);
+    let mut tmp_b = Framebuffer::new(args.width, args.height);
+
+    let mut rendered = 0u32;
+    let mut rendered_secs = 0.0f64;
+
+    for i in 0..total_frames {
+        let path = format!("{dir}/frame_{:05}.png", i + 1);
+        let t = i as f32 / args.fps as f32;
+
+        if std::path::Path::new(&path).exists() {
+            println!("[{:>5}/{total_frames}] {path} ya existe, se salta", i + 1);
+            continue;
+        }
+
+        let seed = record::seed_at(&kfs, t);
+        if seed != current_seed {
+            current_seed = seed;
+            wd = build_world_data(current_seed);
+            skybox = build_skybox(current_seed);
+        }
+
+        let sample = record::sample_timeline(&kfs, (wd.main_center, wd.nether_center, wd.end_center), t);
+        let cam = Camera::new(sample.center, sample.yaw_deg, sample.pitch_deg, sample.dist * wd.main_radius, wd.main_radius * 0.3, wd.main_radius * 12.0, 50.0);
+        let ctx = RecordCtx { wd: &wd, skybox: &skybox, cam: &cam, quality: args.quality, threads };
+
+        let t0 = std::time::Instant::now();
+        render_record_frame(&ctx, sample.night_blend, sample.normalmaps_blend, &mut fb, &mut tmp_a, &mut tmp_b);
+        fb.draw_text(4, fb.height as i32 - 16, sample.caption, 0x00FFFFFF, 2);
+        image_io::write_framebuffer_png(&path, &fb).expect("no se pudo escribir el cuadro");
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        rendered += 1;
+        rendered_secs += ms / 1000.0;
+        let avg_ms = rendered_secs * 1000.0 / rendered as f64;
+        let remaining = total_frames - (i + 1);
+        let eta_s = avg_ms * remaining as f64 / 1000.0;
+        println!("[{:>5}/{total_frames}] {ms:.0}ms  eta~{eta_s:.0}s  {}", i + 1, sample.caption);
+    }
+
+    println!("--record listo: {rendered} cuadro(s) nuevo(s) en {dir}/ (ver record.md)");
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -432,6 +564,10 @@ fn main() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let args = cli::parse(&raw);
 
+    if let Some(dir) = args.record.clone() {
+        run_record_mode(&args, &dir);
+        return;
+    }
     if let Some(path) = args.render.clone() {
         run_render_mode(&args, &path);
         return;

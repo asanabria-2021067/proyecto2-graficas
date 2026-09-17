@@ -10,6 +10,11 @@ pub struct Args {
     pub night: bool,
     pub seed: u32,
     pub no_normalmaps: bool,
+    pub record: Option<String>,
+    pub fps: u32,
+    /// 1=baja, 2=media, 3=alta. Solo lo usa `--record` (el modo ventana elige
+    /// su propia calidad con las teclas 1/2/3).
+    pub quality: u8,
 }
 
 impl Default for Args {
@@ -26,7 +31,19 @@ impl Default for Args {
             night: false,
             seed: 1337,
             no_normalmaps: false,
+            record: None,
+            fps: 30,
+            quality: 3,
         }
+    }
+}
+
+fn parse_quality(s: &str, default: u8) -> u8 {
+    match s {
+        "baja" => 1,
+        "media" => 2,
+        "alta" => 3,
+        _ => default,
     }
 }
 
@@ -51,6 +68,9 @@ pub fn parse(raw: &[String]) -> Args {
             "--night" => args.night = true,
             "--seed" => args.seed = next().parse().unwrap_or(args.seed),
             "--no-normalmaps" => args.no_normalmaps = true,
+            "--record" => args.record = Some(next()),
+            "--fps" => args.fps = next().parse().unwrap_or(args.fps),
+            "--quality" => args.quality = parse_quality(&next(), args.quality),
             _ => {}
         }
         i += 1;

@@ -1053,6 +1053,9 @@ pub struct SceneIslands {
     pub main_radius: f32,
     pub nether_center: Vec3,
     pub end_center: Vec3,
+    /// Isla satelite del monolito de iron_block (para encuadrarlo de cerca
+    /// en `--record`, ver `record.rs`).
+    pub monolith_center: Vec3,
 }
 
 /// Construye la isla principal (el faro, el lago, la casita) y sus dos
@@ -1100,6 +1103,7 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     let sat_a = spawn_island(&mut islands, seed.wrapping_add(101), params_a, offset_a);
     clear_trees_near(&mut islands[sat_a.index].world, sat_a.params.center_x, sat_a.params.center_z, 4);
     build_statue(&mut islands[sat_a.index].world, &sat_a.heightmap, sat_a.params.center_x, sat_a.params.center_z);
+    let monolith_center_world = island_world_center(&islands, &sat_a);
     let wood_bridge = BridgeStyle { deck_id: block::OAK_PLANKS, rail_id: block::OAK_LOG, support_id: block::OAK_LOG, lamp_id: block::GLOWSTONE, arch: false, curve_amount: 3.0 };
     build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_a.index, &sat_a.heightmap, &sat_a.params, water_level_world + 2, &wood_bridge);
 
@@ -1219,5 +1223,5 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     // 2-3 mini-islas de end_stone flotando alrededor de la isla principal del End.
     build_mini_end_islands(&mut islands, end_center_world, er, eseed);
 
-    SceneIslands { islands, main_center: main_center_world, main_radius: r, nether_center: nether_center_world, end_center: end_center_world }
+    SceneIslands { islands, main_center: main_center_world, main_radius: r, nether_center: nether_center_world, end_center: end_center_world, monolith_center: monolith_center_world }
 }

@@ -39,5 +39,9 @@ renders/*.png
 !renders/gallery_4_lighthouse_day.png
 !renders/gallery_4_lighthouse_night.png
 
-# Modo de grabacion offline (--record): cientos/miles de PNGs, no se versionan.
+# Modo de grabacion offline (--record): cientos/miles de PNGs, no se
+# versionan (frames/ para la corrida real, frames_test/ para las pruebas a
+# baja resolucion), ni los .mp4 armados a partir de ellos con ffmpeg.
 frames/
+frames_test/
+*.mp4

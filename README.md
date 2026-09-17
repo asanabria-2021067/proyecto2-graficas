@@ -3,13 +3,17 @@
 <!--
   VIDEO: pegar aca el link/embed una vez grabado (ver record.md para
   generar los cuadros con `--record` y unirlos con ffmpeg en diorama.mp4).
+  Tres formatos posibles, usa el que corresponda y borra los otros:
 
-  - Si lo subis a YouTube (podes dejarlo "no listado"), reemplaza VIDEO_ID
-    y pega esto tal cual:
+  - YouTube con portada propia (recomendado: guarda un frame lindo del
+    render como renders/portada.png y reemplaza URL_DEL_VIDEO):
+    [![Video del diorama](renders/portada.png)](URL_DEL_VIDEO)
+
+  - YouTube con la miniatura automatica (sin necesitar renders/portada.png,
+    reemplaza VIDEO_ID):
     [![Video del diorama](https://img.youtube.com/vi/VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=VIDEO_ID)
 
-  - Si es un archivo (GitHub Releases, Drive, etc.) o preferis solo un
-    link de texto, alcanza con:
+  - Archivo directo (GitHub Releases, Drive, etc.) o solo un link de texto:
     [Ver video](URL_DEL_VIDEO)
 -->
 

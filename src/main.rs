@@ -49,16 +49,17 @@ struct WorldData {
     main_radius: f32,
     nether_center: Vec3,
     end_center: Vec3,
+    monolith_center: Vec3,
     gen_ms: f64,
 }
 
 fn build_world_data(seed: u32) -> WorldData {
     let t0 = std::time::Instant::now();
-    let SceneIslands { islands, main_center, main_radius, nether_center, end_center } = build_lighthouse_scene(seed);
+    let SceneIslands { islands, main_center, main_radius, nether_center, end_center, monolith_center } = build_lighthouse_scene(seed);
     let materials = material::build_material_table(seed);
     let lights = build_light_grid(&islands, &materials, 8.0);
     let gen_ms = t0.elapsed().as_secs_f64() * 1000.0;
-    WorldData { islands, materials, lights, main_center, main_radius, nether_center, end_center, gen_ms }
+    WorldData { islands, materials, lights, main_center, main_radius, nether_center, end_center, monolith_center, gen_ms }
 }
 
 /// La distancia maxima de zoom tiene que alcanzar para que las 5 islas
@@ -208,6 +209,144 @@ fn render_record_frame(ctx: &RecordCtx, night_blend: f32, normalmaps_blend: f32,
     }
 }
 
+fn centers_of(wd: &WorldData) -> record::Centers {
+    record::Centers { main: wd.main_center, nether: wd.nether_center, end: wd.end_center, monolith: wd.monolith_center }
+}
+
+/// `duration*fps` cuadros no alcanzan a incluir un cuadro exactamente EN
+/// `duration` (el ultimo keyframe del guion): con indices `0..N-1` el tiempo
+/// maximo que se llega a samplear es `(N-1)/fps`, siempre un toque antes.
+/// El `+1` hace que el ultimo cuadro caiga justo ahi.
+fn total_frames_for(duration: f32, fps: u32) -> u32 {
+    (duration * fps as f32).round().max(1.0) as u32 + 1
+}
+
+/// Promedio movil exponencial del costo por cuadro, para un ETA que
+/// reacciona rapido a cuadros mas caros/baratos (cambia de isla, blend
+/// dia/noche que renderiza el doble) en vez de arrastrar todo el historial
+/// como un promedio global.
+struct EtaTracker {
+    ema_ms: Option<f64>,
+}
+
+impl EtaTracker {
+    const ALPHA: f64 = 0.15;
+
+    fn new() -> Self {
+        EtaTracker { ema_ms: None }
+    }
+
+    fn update(&mut self, ms: f64) -> f64 {
+        let ema = match self.ema_ms {
+            Some(prev) => Self::ALPHA * ms + (1.0 - Self::ALPHA) * prev,
+            None => ms,
+        };
+        self.ema_ms = Some(ema);
+        ema
+    }
+}
+
+fn format_hms(total_secs: f64) -> String {
+    let total_secs = total_secs.max(0.0).round() as u64;
+    let (h, m, s) = (total_secs / 3600, (total_secs % 3600) / 60, total_secs % 60);
+    format!("{h}:{m:02}:{s:02}")
+}
+
+/// `--dump-timeline`: sin ventana ni renders, imprime por cuadro la posicion
+/// real de camara (`Camera::position`, ya con yaw/pitch/dist/centro
+/// resueltos) y el tramo del guion, y al final reporta cuadros donde el
+/// desplazamiento respecto al anterior se sale de lo esperado -- la forma de
+/// verificar que un cambio de tramo no meta un salto de camara (solo el
+/// corte de semilla, marcado aparte, puede ser brusco).
+fn run_dump_timeline_mode(args: &Args) {
+    let seed_a = args.seed;
+    let seed_b = seed_a.wrapping_add(4242);
+    let seed_c = seed_a.wrapping_add(9191);
+    let kfs = record::timeline(seed_a, seed_b, seed_c);
+    let duration = record::total_duration(&kfs);
+    let total_frames = total_frames_for(duration, args.fps);
+
+    println!("--dump-timeline: @{}fps, {duration:.1}s ({total_frames} cuadros)", args.fps);
+
+    let mut wd = build_world_data(seed_a);
+    let mut current_seed = seed_a;
+
+    let mut prev_eye: Option<Vec3> = None;
+    let mut prev_seed = current_seed;
+    // (indice, delta, si el cuadro anterior fue un corte de semilla) de cada
+    // par de cuadros consecutivos -- una sola pasada, sin reconstruir el
+    // mundo dos veces solo para volver a calcular lo mismo.
+    let mut deltas: Vec<(u32, f32, bool)> = Vec::with_capacity(total_frames as usize);
+    let mut cuts: Vec<u32> = Vec::new();
+
+    for i in 0..total_frames {
+        let t = i as f32 / args.fps as f32;
+        let seed = record::seed_at(&kfs, t);
+        if seed != current_seed {
+            current_seed = seed;
+            wd = build_world_data(current_seed);
+        }
+
+        let sample = record::sample_timeline(&kfs, centers_of(&wd), t);
+        let cam = Camera::new(sample.center, sample.yaw_deg, sample.pitch_deg, sample.dist * wd.main_radius, wd.main_radius * 0.3, wd.main_radius * 12.0, 50.0);
+        let eye = cam.position();
+
+        let seed_changed = seed != prev_seed;
+        let delta = prev_eye.map(|p| (eye - p).length());
+        if let Some(d) = delta {
+            if seed_changed {
+                cuts.push(i);
+            }
+            deltas.push((i, d, seed_changed));
+        }
+
+        println!(
+            "[{:>5}/{total_frames}] t={t:6.2}s {:<24} yaw={:6.1} pitch={:5.1} dist={:6.1} eye=({:7.1},{:7.1},{:7.1}) d={}",
+            i + 1,
+            sample.segment,
+            sample.yaw_deg,
+            sample.pitch_deg,
+            sample.dist * wd.main_radius,
+            eye.x,
+            eye.y,
+            eye.z,
+            delta.map(|d| format!("{d:5.2}")).unwrap_or_else(|| "  -  ".to_string()),
+        );
+
+        prev_eye = Some(eye);
+        prev_seed = seed;
+    }
+
+    if !cuts.is_empty() {
+        println!("cortes de semilla (esperados, no son saltos): cuadros {cuts:?}");
+    }
+
+    // Umbral robusto (mediana + 6x desviacion absoluta mediana) en vez de un
+    // numero fijo: la velocidad de camara cambia mucho entre tramos (quieta
+    // en `e`, orbitando en `c`, viajando en `f`/`g1`/`h1`), un umbral fijo o
+    // bien deja pasar saltos chicos en los tramos lentos o dispara falsos
+    // positivos en los rapidos.
+    let clean: Vec<f32> = deltas.iter().filter(|(_, _, cut)| !cut).map(|(_, d, _)| *d).collect();
+    if clean.len() > 4 {
+        let mut sorted = clean.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median = sorted[sorted.len() / 2];
+        let mut abs_dev: Vec<f32> = clean.iter().map(|d| (d - median).abs()).collect();
+        abs_dev.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let mad = abs_dev[abs_dev.len() / 2].max(0.001);
+        let threshold = median + 6.0 * mad;
+
+        let jumps: Vec<(u32, f32)> = deltas.iter().filter(|(_, d, cut)| !cut && *d > threshold).map(|(i, d, _)| (*i, *d)).collect();
+
+        println!("mediana de desplazamiento por cuadro: {median:.3}, umbral de salto: {threshold:.3}");
+        if jumps.is_empty() {
+            println!("sin saltos de camara detectados fuera de los cortes de semilla.");
+        } else {
+            println!("POSIBLES SALTOS DE CAMARA: {jumps:?}");
+        }
+    }
+}
+
 /// `--record <dir>`: recorrido de camara offline (`record::timeline`) a
 /// maxima calidad, un PNG por cuadro (`frame_00001.png`, ...), sin ventana.
 /// Reanudable: un cuadro cuyo PNG ya existe se saltea sin volver a
@@ -223,12 +362,7 @@ fn run_record_mode(args: &Args, dir: &str) {
     let seed_c = seed_a.wrapping_add(9191);
     let kfs = record::timeline(seed_a, seed_b, seed_c);
     let duration = record::total_duration(&kfs);
-    // +1 para que el ULTIMO cuadro caiga exactamente en `duration` (el
-    // ultimo keyframe del guion) -- con solo `round(duration*fps)` cuadros
-    // (indices 0..N-1) el tiempo maximo alcanzable es (N-1)/fps, siempre un
-    // toque antes de `duration`, y el estado/caption final del guion nunca
-    // llegaba a aparecer en ningun cuadro.
-    let total_frames = (duration * args.fps as f32).round().max(1.0) as u32 + 1;
+    let total_frames = total_frames_for(duration, args.fps);
     let threads = default_thread_count();
 
     println!("--record: {dir}/ {}x{} @{}fps calidad={} -- {duration:.1}s ({total_frames} cuadros)", args.width, args.height, args.fps, args.quality);
@@ -242,7 +376,7 @@ fn run_record_mode(args: &Args, dir: &str) {
     let mut tmp_b = Framebuffer::new(args.width, args.height);
 
     let mut rendered = 0u32;
-    let mut rendered_secs = 0.0f64;
+    let mut eta = EtaTracker::new();
 
     for i in 0..total_frames {
         let path = format!("{dir}/frame_{:05}.png", i + 1);
@@ -260,7 +394,7 @@ fn run_record_mode(args: &Args, dir: &str) {
             skybox = build_skybox(current_seed);
         }
 
-        let sample = record::sample_timeline(&kfs, (wd.main_center, wd.nether_center, wd.end_center), t);
+        let sample = record::sample_timeline(&kfs, centers_of(&wd), t);
         let cam = Camera::new(sample.center, sample.yaw_deg, sample.pitch_deg, sample.dist * wd.main_radius, wd.main_radius * 0.3, wd.main_radius * 12.0, 50.0);
         let ctx = RecordCtx { wd: &wd, skybox: &skybox, cam: &cam, quality: args.quality, threads };
 
@@ -271,11 +405,10 @@ fn run_record_mode(args: &Args, dir: &str) {
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
 
         rendered += 1;
-        rendered_secs += ms / 1000.0;
-        let avg_ms = rendered_secs * 1000.0 / rendered as f64;
+        let ema_ms = eta.update(ms);
         let remaining = total_frames - (i + 1);
-        let eta_s = avg_ms * remaining as f64 / 1000.0;
-        println!("[{:>5}/{total_frames}] {ms:.0}ms  eta~{eta_s:.0}s  {}", i + 1, sample.caption);
+        let eta_str = format_hms(ema_ms * remaining as f64 / 1000.0);
+        println!("[{:>5}/{total_frames}] {ms:.0}ms  eta~{eta_str}  {}", i + 1, sample.caption);
     }
 
     println!("--record listo: {rendered} cuadro(s) nuevo(s) en {dir}/ (ver record.md)");
@@ -564,6 +697,10 @@ fn main() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let args = cli::parse(&raw);
 
+    if args.dump_timeline {
+        run_dump_timeline_mode(&args);
+        return;
+    }
     if let Some(dir) = args.record.clone() {
         run_record_mode(&args, &dir);
         return;

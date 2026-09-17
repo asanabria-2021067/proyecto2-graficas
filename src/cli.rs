@@ -15,6 +15,10 @@ pub struct Args {
     /// 1=baja, 2=media, 3=alta. Solo lo usa `--record` (el modo ventana elige
     /// su propia calidad con las teclas 1/2/3).
     pub quality: u8,
+    /// No renderiza nada: imprime por cuadro la posicion de camara y el
+    /// tramo del guion de `--record` (misma semilla/fps que se le pasen), y
+    /// al final reporta si detecto saltos de camara entre cuadros.
+    pub dump_timeline: bool,
 }
 
 impl Default for Args {
@@ -34,6 +38,7 @@ impl Default for Args {
             record: None,
             fps: 30,
             quality: 3,
+            dump_timeline: false,
         }
     }
 }
@@ -71,6 +76,7 @@ pub fn parse(raw: &[String]) -> Args {
             "--record" => args.record = Some(next()),
             "--fps" => args.fps = next().parse().unwrap_or(args.fps),
             "--quality" => args.quality = parse_quality(&next(), args.quality),
+            "--dump-timeline" => args.dump_timeline = true,
             _ => {}
         }
         i += 1;

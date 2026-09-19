@@ -47,7 +47,13 @@ pub mod block {
     pub const PURPUR_PILLAR: u8 = 37;
     pub const CHORUS_PLANT: u8 = 38;
     pub const MAGENTA_GLASS: u8 = 39;
-    pub const COUNT: usize = 40;
+    pub const COBBLESTONE: u8 = 40;
+    pub const STONE: u8 = 41;
+    pub const FARMLAND: u8 = 42;
+    pub const DIRT_PATH: u8 = 43;
+    pub const CROPS: u8 = 44;
+    pub const LANTERN: u8 = 45;
+    pub const COUNT: usize = 46;
 }
 
 pub struct FaceTex {
@@ -385,6 +391,29 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     let mut magenta_glass = Material::uniform("magenta_glass", seed, MatParams { specular_coef: 0.6, specular_exp: 120.0, transparency: 0.85, reflectivity: 0.08, ior: 1.5, ..Default::default() });
     magenta_glass.tint = Vec3::new(1.0, 0.55, 0.95);
     entries[block::MAGENTA_GLASS as usize] = Some(magenta_glass);
+
+    // ---------- Pueblo (parte 2) ----------
+
+    let mut cobblestone = Material::uniform_bumped("cobblestone", seed, MatParams { specular_coef: 0.08, specular_exp: 12.0, reflectivity: 0.02, ..Default::default() });
+    cobblestone.normal_strength = 1.1;
+    entries[block::COBBLESTONE as usize] = Some(cobblestone);
+
+    let mut stone = Material::uniform_bumped("stone", seed, MatParams { specular_coef: 0.12, specular_exp: 18.0, reflectivity: 0.04, ..Default::default() });
+    stone.normal_strength = 0.5;
+    entries[block::STONE as usize] = Some(stone);
+
+    entries[block::FARMLAND as usize] = Some(Material::uniform("farmland", seed, MatParams { specular_coef: 0.02, specular_exp: 4.0, ..Default::default() }));
+
+    entries[block::DIRT_PATH as usize] = Some(Material::uniform("dirt_path", seed, MatParams { specular_coef: 0.03, specular_exp: 6.0, ..Default::default() }));
+
+    let mut crops = Material::uniform("crops", seed, MatParams { specular_coef: 0.03, specular_exp: 6.0, ..Default::default() });
+    crops.alpha_cutout = true;
+    entries[block::CROPS as usize] = Some(crops);
+
+    // Farol: emisivo calido, se prende solo con el material (sin bloque de
+    // glowstone aparte adentro), para poner uno por bloque en postes/entradas.
+    let lantern = Material::uniform("lantern", seed, MatParams { specular_coef: 0.15, specular_exp: 20.0, emission: Vec3::new(1.0, 0.72, 0.38) * 1.9, ..Default::default() });
+    entries[block::LANTERN as usize] = Some(lantern);
 
     MaterialTable { entries }
 }

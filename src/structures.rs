@@ -375,6 +375,200 @@ fn build_path_lights(world: &mut World, hm: &Heightmap, points: &[(i32, i32)]) {
     }
 }
 
+// ---------- Pueblo (parte 2) ----------
+
+/// Techo a dos aguas: dos faldones que suben desde los muros largos hacia un
+/// caballete central, con 1 bloque de alero que sobresale del muro a cada
+/// lado. `ridge_along_x` decide si el caballete corre en X (el techo sube/
+/// baja en Z) o en Z (sube/baja en X).
+#[allow(clippy::too_many_arguments)]
+fn build_gable_roof(world: &mut World, cx: i32, cz: i32, half_x: i32, half_z: i32, roof_y0: i32, ridge_along_x: bool, id: u8) {
+    if ridge_along_x {
+        let ortho_half = half_z + 1;
+        let span_half = half_x + 1;
+        for o in -ortho_half..=ortho_half {
+            let y = roof_y0 + (ortho_half - o.abs());
+            world.fill_box((cx - span_half, y, cz + o), (cx + span_half, y, cz + o), id);
+        }
+    } else {
+        let ortho_half = half_x + 1;
+        let span_half = half_z + 1;
+        for o in -ortho_half..=ortho_half {
+            let y = roof_y0 + (ortho_half - o.abs());
+            world.fill_box((cx + o, y, cz - span_half), (cx + o, y, cz + span_half), id);
+        }
+    }
+}
+
+/// Casa de pueblo: zocalo de cobblestone, paredes de oak_planks con vigas de
+/// oak_log en las 4 esquinas y un cinturon de troncos bajo el techo, techo a
+/// dos aguas con alero, 2-3 ventanas de vidrio con marco de tronco, puerta al
+/// frente y un farol junto a la entrada. Interior hueco (paredes con
+/// `hollow_box`, no solidas) para que las ventanas dejen ver adentro, con un
+/// farol propio ademas. `variant` (0/1/2) cambia footprint y orientacion del
+/// techo para que las 3+ variantes pedidas no se vean todas iguales.
+fn build_village_house(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, variant: u32) {
+    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
+    let (half_w, half_d, wall_h, ridge_along_x) = match variant % 3 {
+        0 => (2, 1, 4, true),
+        1 => (1, 2, 4, false),
+        _ => (2, 2, 5, true),
+    };
+    flatten_area(world, cx - half_w - 1, cz - half_d - 1, cx + half_w + 1, cz + half_d + 1, base_y, block::GRASS);
+
+    world.fill_box((cx - half_w, base_y, cz - half_d), (cx + half_w, base_y, cz + half_d), block::COBBLESTONE);
+
+    let y0 = base_y + 1;
+    let y1 = y0 + wall_h - 1;
+    world.hollow_box((cx - half_w, y0, cz - half_d), (cx + half_w, y1, cz + half_d), block::OAK_PLANKS);
+
+    for &(dx, dz) in &[(-half_w, -half_d), (half_w, -half_d), (-half_w, half_d), (half_w, half_d)] {
+        place_pillar(world, cx + dx, cz + dz, y0, y1, block::OAK_LOG);
+    }
+    world.hollow_box((cx - half_w, y1, cz - half_d), (cx + half_w, y1, cz + half_d), block::OAK_LOG);
+
+    // Puerta al frente (+z), de 2 de alto.
+    world.fill_box((cx, y0, cz + half_d), (cx, y0 + 1, cz + half_d), block::AIR);
+
+    // Ventanas con marco de tronco en los lados que sobran (2-3 segun tamano).
+    let wy = y0 + 1;
+    world.set(cx - half_w, wy, cz, block::GLASS);
+    world.set(cx + half_w, wy, cz, block::GLASS);
+    world.set(cx, wy, cz - half_d, block::GLASS);
+    if half_w >= 3 {
+        world.set(cx - half_w, wy, cz - 1, block::GLASS);
+    }
+
+    // Farol junto a la entrada y luz interior (se ve por las ventanas de noche).
+    world.set(cx + 1, y0, cz + half_d + 1, block::LANTERN);
+    world.set(cx, y0 + 1, cz, block::LANTERN);
+
+    build_gable_roof(world, cx, cz, half_w, half_d, y1 + 1, ridge_along_x, block::OAK_PLANKS);
+}
+
+/// Construccion de piedra mas grande, centro del pueblo: torre/capilla de
+/// cobblestone y stone_bricks con techo piramidal de tablones, ventanas y un
+/// farol en la punta. Coexiste con el faro (que se queda donde esta).
+fn build_village_tower(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
+    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
+    let r = 2;
+    flatten_area(world, cx - r - 1, cz - r - 1, cx + r + 1, cz + r + 1, base_y, block::COBBLESTONE);
+
+    let y0 = base_y + 1;
+    let wall_h = 8;
+    let y1 = y0 + wall_h - 1;
+    world.hollow_box((cx - r, y0, cz - r), (cx + r, y1, cz + r), block::STONE_BRICKS);
+    for &(dx, dz) in &[(-r, -r), (r, -r), (-r, r), (r, r)] {
+        place_pillar(world, cx + dx, cz + dz, y0, y1, block::COBBLESTONE);
+    }
+    // Puerta y ventanas.
+    world.fill_box((cx, y0, cz - r), (cx, y0 + 1, cz - r), block::AIR);
+    for &off in &[-1, 1] {
+        world.set(cx + off, y0 + 3, cz - r, block::GLASS);
+        world.set(cx + off, y0 + 3, cz + r, block::GLASS);
+        world.set(cx - r, y0 + 3, cz + off, block::GLASS);
+        world.set(cx + r, y0 + 3, cz + off, block::GLASS);
+    }
+
+    // Techo piramidal SOLIDO de tablones (cada capa un poco mas chica que la
+    // anterior), con farol en la punta.
+    let mut y = y1 + 1;
+    for inset in 0..r {
+        world.fill_box((cx - r + inset, y, cz - r + inset), (cx + r - inset, y, cz + r - inset), block::OAK_PLANKS);
+        y += 1;
+    }
+    world.set(cx, y, cz, block::LANTERN);
+}
+
+/// Parcela de cultivo: rectangulo de farmland con un canal de agua de 1
+/// bloque por el medio, filas de `crops` en el resto, y una cerca de postes
+/// de oak_log alrededor (el enunciado permite usar oak_log delgado en vez de
+/// un material de cerca aparte).
+fn build_farm_plot(world: &mut World, hm: &Heightmap, cx: i32, cz: i32, half_w: i32, half_d: i32) {
+    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
+    flatten_area(world, cx - half_w, cz - half_d, cx + half_w, cz + half_d, base_y, block::FARMLAND);
+
+    for dz in -half_d..=half_d {
+        world.set(cx, base_y, cz + dz, block::WATER);
+    }
+    for dz in -half_d..=half_d {
+        for dx in -half_w..=half_w {
+            if dx == 0 {
+                continue; // canal
+            }
+            world.set(cx + dx, base_y + 1, cz + dz, block::CROPS);
+        }
+    }
+
+    for dx in -half_w - 1..=half_w + 1 {
+        let post = dx.rem_euclid(2) == 0 || dx == -half_w - 1 || dx == half_w + 1;
+        if post {
+            world.set(cx + dx, base_y + 1, cz - half_d - 1, block::OAK_LOG);
+            world.set(cx + dx, base_y + 1, cz + half_d + 1, block::OAK_LOG);
+        }
+    }
+    for dz in -half_d..=half_d {
+        let post = dz.rem_euclid(2) == 0;
+        if post {
+            world.set(cx - half_w - 1, base_y + 1, cz + dz, block::OAK_LOG);
+            world.set(cx + half_w + 1, base_y + 1, cz + dz, block::OAK_LOG);
+        }
+    }
+}
+
+/// Pozo de piedra con agua en el centro del pueblo: anillo de cobblestone
+/// hueco con un espejo de agua adentro, 4 postes de tronco y un techito
+/// piramidal de tablones.
+fn build_well(world: &mut World, hm: &Heightmap, cx: i32, cz: i32) {
+    let base_y = hm.top_at(cx, cz).unwrap_or(world.ny / 2);
+    flatten_area(world, cx - 2, cz - 2, cx + 2, cz + 2, base_y, block::COBBLESTONE);
+    world.hollow_box((cx - 1, base_y + 1, cz - 1), (cx + 1, base_y + 2, cz + 1), block::COBBLESTONE);
+    world.fill_box((cx - 1, base_y + 1, cz - 1), (cx + 1, base_y + 1, cz + 1), block::WATER);
+
+    for &(dx, dz) in &[(-1, -1), (1, -1), (-1, 1), (1, 1)] {
+        place_pillar(world, cx + dx, cz + dz, base_y + 3, base_y + 5, block::OAK_LOG);
+    }
+    world.fill_box((cx - 2, base_y + 6, cz - 2), (cx + 2, base_y + 6, cz + 2), block::OAK_PLANKS);
+    world.fill_box((cx - 1, base_y + 7, cz - 1), (cx + 1, base_y + 7, cz + 1), block::OAK_PLANKS);
+    world.set(cx, base_y + 8, cz, block::OAK_PLANKS);
+}
+
+/// Camino de tierra/grava de `width` bloques que sigue la altura real del
+/// terreno entre dos puntos, sin tocar agua ni estructuras (solo pisa
+/// pasto/tierra/arena) -- para no dejar un camino flotando sobre el lago o
+/// atravesando una pared.
+fn build_ground_path(world: &mut World, hm: &Heightmap, x0: i32, z0: i32, x1: i32, z1: i32, width: i32) {
+    let dx = x1 - x0;
+    let dz = z1 - z0;
+    let steps = dx.abs().max(dz.abs()).max(1);
+    let len = ((dx * dx + dz * dz) as f32).sqrt().max(1.0);
+    let (px, pz) = (-(dz as f32) / len, (dx as f32) / len);
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let cx = x0 as f32 + dx as f32 * t;
+        let cz = z0 as f32 + dz as f32 * t;
+        for w in 0..width {
+            let off = w as f32 - (width as f32 - 1.0) / 2.0;
+            let wx = (cx + px * off).round() as i32;
+            let wz = (cz + pz * off).round() as i32;
+            let Some(y) = hm.top_at(wx, wz) else { continue };
+            let cur = world.get(wx, y, wz);
+            if cur == block::GRASS || cur == block::SAND || cur == block::DIRT {
+                world.set(wx, y, wz, block::DIRT_PATH);
+                // Si habia un arbol parado justo en esta columna (plantado
+                // antes de que existiera el camino), lo saca -- el enunciado
+                // pide que no queden arboles encima de caminos ni parcelas.
+                for dy in 1..7 {
+                    let id = world.get(wx, y + dy, wz);
+                    if id == block::OAK_LOG || id == block::LEAVES {
+                        world.set(wx, y + dy, wz, block::AIR);
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ---------- Nether ----------
 
 /// Lago/rio de lava con cascada por el borde, igual que `build_lake_and_waterfall`
@@ -1095,7 +1289,10 @@ pub struct SceneIslands {
 pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     let mut islands: Vec<Island> = Vec::new();
 
-    let main = spawn_island(&mut islands, seed, IslandParams::new(42.0, 24), (0, 0, 0));
+    // Antes 24 arboles: con el pueblo nuevo ocupando buena parte del interior
+    // (`clear_trees_near` ya saca los que caen encima), bajar la cantidad de
+    // base deja menos reintentos desperdiciados y una isla menos apretada.
+    let main = spawn_island(&mut islands, seed, IslandParams::new(42.0, 16), (0, 0, 0));
     let (cx, cz, r) = (main.params.center_x, main.params.center_z, main.params.radius);
     let water_level_world = main.params.water_level; // offset.y == 0 para la isla principal
 
@@ -1120,6 +1317,69 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
 
     let path_points = [lerp_point((lx, lz), (kx, kz), 0.33), lerp_point((lx, lz), (kx, kz), 0.66), lerp_point((kx, kz), (hx, hz), 0.33), lerp_point((kx, kz), (hx, hz), 0.66)];
     build_path_lights(&mut islands[main.index].world, &main.heightmap, &path_points);
+
+    // Pueblo: el interior de la isla ya tiene 3 cosas grandes (faro a 250
+    // grados, lago a 40 -- su orilla en rampa ocupa un disco enorme, radio +
+    // 9 de sombra -- y casita a 150), asi que el hueco angular mas ancho
+    // entre ellas cae cerca de 200 grados. Layout hexagonal alrededor de la
+    // torre (centro): 3 casas y 2 parcelas intercaladas cada 60 grados, el
+    // pozo mas cerca del centro en el sexto hueco.
+    let village_center = polar(cx, cz, 200.0, r * 0.48);
+    clear_trees_near(&mut islands[main.index].world, village_center.0, village_center.1, 13);
+
+    // Offsets en cartesianas (no polares): con estructuras cuadradas, dos
+    // puntos a la misma distancia angular pueden terminar con sus AABB
+    // pisandose por poco (la diagonal de un cuadrado mide mas que su lado).
+    // Elegidos a mano para que ningun par de rectangulos (torre/casas/pozo/
+    // parcelas, cada uno con su alcance real incluido) se toque.
+    let house0 = (village_center.0 + 8, village_center.1);
+    let house1 = (village_center.0, village_center.1 + 8);
+    let house2 = (village_center.0 - 9, village_center.1 - 2);
+    build_village_house(&mut islands[main.index].world, &main.heightmap, house0.0, house0.1, 0);
+    build_village_house(&mut islands[main.index].world, &main.heightmap, house1.0, house1.1, 1);
+    build_village_house(&mut islands[main.index].world, &main.heightmap, house2.0, house2.1, 2);
+
+    build_village_tower(&mut islands[main.index].world, &main.heightmap, village_center.0, village_center.1);
+
+    let well_pos = (village_center.0, village_center.1 - 7);
+    build_well(&mut islands[main.index].world, &main.heightmap, well_pos.0, well_pos.1);
+
+    let farm0 = (village_center.0 + 9, village_center.1 + 8);
+    let farm1 = (village_center.0 - 9, village_center.1 - 9);
+    build_farm_plot(&mut islands[main.index].world, &main.heightmap, farm0.0, farm0.1, 2, 2);
+    build_farm_plot(&mut islands[main.index].world, &main.heightmap, farm1.0, farm1.1, 2, 2);
+
+    // Faroles en postes a mitad de camino de cada radio del pueblo -- antes
+    // de pintar los caminos, para que `build_path_lights` todavia vea pasto
+    // debajo (si se llamara despues, el propio camino ya habria pisado esa
+    // columna y la condicion de pasto/arena no pasaria).
+    let village_lights = [
+        lerp_point(village_center, house0, 0.55),
+        lerp_point(village_center, house1, 0.55),
+        lerp_point(village_center, house2, 0.55),
+        lerp_point(village_center, farm0, 0.5),
+        lerp_point(village_center, farm1, 0.5),
+    ];
+    build_path_lights(&mut islands[main.index].world, &main.heightmap, &village_lights);
+
+    let village_spokes = [house0, house1, house2, well_pos, farm0, farm1];
+    for &(ex, ez) in &village_spokes {
+        build_ground_path(&mut islands[main.index].world, &main.heightmap, village_center.0, village_center.1, ex, ez, 2);
+    }
+
+    // Camino troncal que une muelle - faro - casita - torre del pueblo, y de
+    // ahi ramales cortos hacia el extremo real de cada puente (cada uno sale
+    // del punto mas cercano, no todos desde la torre, para no cruzar por
+    // encima del lago).
+    build_ground_path(&mut islands[main.index].world, &main.heightmap, kx, kz, lx, lz, 2);
+    build_ground_path(&mut islands[main.index].world, &main.heightmap, lx, lz, hx, hz, 2);
+    build_ground_path(&mut islands[main.index].world, &main.heightmap, hx, hz, village_center.0, village_center.1, 2);
+
+    let bridge_spurs = [(250.0f32, lx, lz), (70.0, kx, kz), (160.0, hx, hz), (320.0, lx, lz)];
+    for (angle, fx, fz) in bridge_spurs {
+        let (ex, ez, _) = find_edge(&main.heightmap, cx, cz, angle.to_radians(), r + 80.0);
+        build_ground_path(&mut islands[main.index].world, &main.heightmap, fx, fz, ex, ez, 2);
+    }
 
     let main_center_world = island_world_center(&islands, &main);
     let sat_gap = 14.0;

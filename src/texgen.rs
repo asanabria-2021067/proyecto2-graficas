@@ -779,6 +779,102 @@ fn soul_sand(seed: u32) -> Vec<u8> {
     buf
 }
 
+fn cobblestone(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    let cell = 4u32;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let (cellx, celly) = (x / cell, y / cell);
+            let shade = rand01(seed ^ 0xC0BB, cellx, celly);
+            let (lx, ly) = (x % cell, y % cell);
+            let edge = lx == 0 || ly == 0;
+            let mortar = edge && rand01(seed ^ 0xC0BC, x, y) < 0.65;
+            let n = rand01(seed, x, y);
+            let base = if mortar { 70.0 } else { 105.0 + shade * 55.0 };
+            let v = vary(base as u8, 8, n);
+            put(&mut buf, x, y, [v, v, (v as i32 + 2).clamp(0, 255) as u8, 255]);
+        }
+    }
+    buf
+}
+
+fn stone(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let v = vary(158, 8, n);
+            put(&mut buf, x, y, [v, v, (v as i32 + 2).clamp(0, 255) as u8, 255]);
+        }
+    }
+    buf
+}
+
+fn farmland(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        let furrow = y % 4 == 3;
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            let (r, g, b) = if furrow { (58, 38, 22) } else { (104, 70, 44) };
+            put(&mut buf, x, y, [vary(r, 10, n), vary(g, 8, n), vary(b, 8, n), 255]);
+        }
+    }
+    buf
+}
+
+fn dirt_path(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = rand01(seed, x, y);
+            // Gris-parduzco desaturado (tierra apisonada/grava), a proposito
+            // bien distinto del marron calido de oak_planks -- si no, un
+            // camino que sale de una casa se confunde con su propio techo
+            // visto desde arriba.
+            let pebble = rand01(seed ^ 0xD17A, x / 2, y / 2) > 0.75;
+            let base = if pebble { 150 } else { 128 };
+            let r = vary(base, 8, n);
+            let g = vary((base as f32 * 0.93) as u8, 8, n);
+            let b = vary((base as f32 * 0.85) as u8, 6, n);
+            put(&mut buf, x, y, [r, g, b, 255]);
+        }
+    }
+    buf
+}
+
+fn crops(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            if flame_shape(seed ^ 0xC20B, x, SIZE - 1 - y) {
+                let n = rand01(seed, x, y);
+                let ripe = y < 5 && rand01(seed ^ 0x6E07, x, y) < 0.4;
+                let (r, g, b) = if ripe { (198, 168, 62) } else { (66, 138, 46) };
+                put(&mut buf, x, y, [vary(r, 14, n), vary(g, 16, n), vary(b, 14, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
+fn lantern(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let frame = x < 2 || y < 2 || x >= SIZE - 2 || y >= SIZE - 2 || x == SIZE / 2 || y == SIZE / 2;
+            let n = rand01(seed, x, y);
+            if frame {
+                let v = vary(42, 8, n);
+                put(&mut buf, x, y, [v, v, (v as i32 + 3).clamp(0, 255) as u8, 255]);
+            } else {
+                put(&mut buf, x, y, [vary(255, 6, n), vary(198, 14, n), vary(105, 18, n), 255]);
+            }
+        }
+    }
+    buf
+}
+
 /// Generates a 16x16 RGBA8 texture by name. Unknown names fall back to a
 /// magenta/black checker so a typo is obvious instead of silently blank.
 pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
@@ -826,6 +922,12 @@ pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
         "end_crystal" => end_crystal(seed),
         "end_rod" => end_rod(seed),
         "chorus" => chorus(seed),
+        "cobblestone" => cobblestone(seed),
+        "stone" => stone(seed),
+        "farmland" => farmland(seed),
+        "dirt_path" => dirt_path(seed),
+        "crops" => crops(seed),
+        "lantern" => lantern(seed),
         _ => {
             let mut buf = blank();
             for y in 0..SIZE {

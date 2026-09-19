@@ -875,6 +875,27 @@ fn lantern(seed: u32) -> Vec<u8> {
     buf
 }
 
+/// Estandarte de puente: tela colgando con alpha cutout -- rectangulo
+/// pleno arriba, dos puntas en V abajo (silueta de bandera), franja dorada
+/// cerca del tope y un remate dorado en el borde inferior de cada punta.
+fn banner(seed: u32) -> Vec<u8> {
+    let mut buf = blank();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let in_cloth = (3..=12).contains(&x);
+            let notch = y >= 12 && (((3..=6).contains(&x) && y > 12 + (x - 3)) || ((9..=12).contains(&x) && y > 12 + (12 - x)));
+            if !in_cloth || notch {
+                continue;
+            }
+            let n = rand01(seed, x, y);
+            let gold_stripe = (2..=3).contains(&y);
+            let (r, g, b) = if gold_stripe { (198, 158, 60) } else { (132, 30, 30) };
+            put(&mut buf, x, y, [vary(r, 12, n), vary(g, 10, n), vary(b, 10, n), 255]);
+        }
+    }
+    buf
+}
+
 /// Generates a 16x16 RGBA8 texture by name. Unknown names fall back to a
 /// magenta/black checker so a typo is obvious instead of silently blank.
 pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
@@ -928,6 +949,7 @@ pub fn generate(name: &str, seed: u32) -> (u32, u32, Vec<u8>) {
         "dirt_path" => dirt_path(seed),
         "crops" => crops(seed),
         "lantern" => lantern(seed),
+        "banner" => banner(seed),
         _ => {
             let mut buf = blank();
             for y in 0..SIZE {

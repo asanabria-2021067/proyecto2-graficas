@@ -1022,16 +1022,20 @@ fn build_mini_end_islands(islands: &mut Vec<Island>, center_world: Vec3, main_ra
     }
 }
 
-/// Parametros de un estilo de puente: que materiales usa y si el tablero
-/// sube en el medio (arco, puentes "de piedra") o cuelga (catenaria,
-/// puentes colgantes).
+/// Parametros de un estilo de puente: mismo esqueleto para todos (ver
+/// `build_bridge_span`), solo cambian los materiales.
 pub struct BridgeStyle {
+    /// Tablero de 3 de ancho, piedra clara o su equivalente tematico.
     pub deck_id: u8,
-    pub rail_id: u8,
-    pub support_id: u8,
+    /// Viga de borde a la altura del tablero, pasamanos horizontal y
+    /// postes -- material "de madera" o su equivalente.
+    pub beam_id: u8,
+    /// Arcos de soporte cortos y anchos debajo del tablero.
+    pub arch_id: u8,
+    /// Farol emisivo encima de cada poste.
     pub lamp_id: u8,
-    pub arch: bool,
-    pub curve_amount: f32,
+    /// Estandarte decorativo colgando de algunos postes.
+    pub banner_id: u8,
 }
 
 /// Cuanto puede llegar a medir un solo tramo antes de que `build_bridge`
@@ -1060,13 +1064,14 @@ fn build_rest_island(islands: &mut Vec<Island>, center_world: Vec3, r: i32) -> V
 }
 
 /// Un solo tramo de puente entre dos puntos de MUNDO ya conocidos, como su
-/// propia mini-grilla: tablero de 3 de ancho que sigue una curva (catenaria
-/// o arco segun `style`), pasamanos continuo a los dos lados con postes
-/// cada 3 pasos, linternas emisivas cada 6, y subestructura visible debajo
-/// (vigas cruzadas + cuerdas colgando de pilares altos para los colgantes;
-/// arcos de soporte + una estalactita en el punto mas alto para los de
-/// piedra) -- para que se lea como un puente real desde lejos, no una
-/// linea de bloques sueltos.
+/// propia mini-grilla: tablero RECTO de 3 de ancho (sin sag ni arco propio,
+/// solo sigue la linea entre los dos extremos), viga continua de borde a la
+/// altura del tablero, pasamanos horizontal continuo, postes de 2 de alto
+/// cada 5 pasos con un farol encima, estandartes colgando de la mitad de
+/// los postes, y 2-3 arcos de soporte cortos y anchos debajo (nunca en las
+/// puntas, nunca mas de 3 bloques de caida) -- nada cuelga mas que eso, asi
+/// que se lee como un puente real desde lejos y de costado, no como una
+/// pared de postes verticales.
 fn build_bridge_span(islands: &mut Vec<Island>, a: Vec3, b: Vec3, style: &BridgeStyle) {
     let dx = b.x - a.x;
     let dz = b.z - a.z;
@@ -1079,109 +1084,81 @@ fn build_bridge_span(islands: &mut Vec<Island>, a: Vec3, b: Vec3, style: &Bridge
     let max_x = a.x.max(b.x) as i32 + margin;
     let min_z = a.z.min(b.z) as i32 - margin;
     let max_z = a.z.max(b.z) as i32 + margin;
-    let extra_up = if style.arch { style.curve_amount } else { 9.0 };
-    let min_y = (a.y.min(b.y) - style.curve_amount - 7.0) as i32;
-    let max_y = (a.y.max(b.y) + extra_up + 2.0) as i32;
+    let min_y = (a.y.min(b.y) - 8.0) as i32; // arcos bajan a lo sumo 3
+    let max_y = (a.y.max(b.y) + 7.0) as i32; // postes+farol hasta +4
     let offset = (min_x, min_y, min_z);
-    let mut span = Island::new(World::new((max_x - min_x).max(4), (max_y - min_y).max(16), (max_z - min_z).max(4)), offset);
+    let mut span = Island::new(World::new((max_x - min_x).max(4), (max_y - min_y).max(12), (max_z - min_z).max(4)), offset);
 
     let local_a = span.to_local_point(a);
     let local_b = span.to_local_point(b);
 
-    // Pilares altos en cada extremo, de donde "cuelgan" las cuerdas del
-    // puente colgante -- no hace falta para el de arco (su soporte va
-    // debajo del tablero, no arriba).
-    if !style.arch {
-        for &sign in &[-1.0f32, 1.0] {
-            for (lx, lz, ly) in [(local_a.x, local_a.z, local_a.y), (local_b.x, local_b.z, local_b.y)] {
-                let px = (lx + perp_x * 1.5 * sign).round() as i32;
-                let pz = (lz + perp_z * 1.5 * sign).round() as i32;
-                place_pillar(&mut span.world, px, pz, ly.round() as i32 + 1, ly.round() as i32 + 8, style.rail_id);
-            }
-        }
+    // 2-3 arcos repartidos a lo largo (nunca en las puntas): con puentes
+    // cortos alcanza con 2, los mas largos (tramos partidos por islas de
+    // descanso rara vez pasan de ~40) llegan a 3.
+    let n_arches: i32 = if steps > 28 { 3 } else { 2 };
+    let mut arch_steps = [0i32; 3];
+    for (k, slot) in arch_steps.iter_mut().enumerate().take(n_arches as usize) {
+        *slot = (steps * (k as i32 + 1)) / (n_arches + 1);
     }
+    let arch_steps = &arch_steps[..n_arches as usize];
 
     for i in 0..=steps {
         let t = i as f32 / steps as f32;
         let cx = local_a.x + (local_b.x - local_a.x) * t;
         let cz = local_a.z + (local_b.z - local_a.z) * t;
-        let base_deck_y = local_a.y + (local_b.y - local_a.y) * t;
-        let shape = 4.0 * t * (1.0 - t); // 0 en los extremos, 1 en el medio
-        let deck_y = if style.arch { (base_deck_y + style.curve_amount * shape).round() as i32 } else { (base_deck_y - style.curve_amount * shape).round() as i32 };
+        let deck_y = (local_a.y + (local_b.y - local_a.y) * t).round() as i32;
 
+        // Tablero, plano y bien visible desde arriba.
         for w in -1..=1 {
             let wx = (cx + perp_x * w as f32).round() as i32;
             let wz = (cz + perp_z * w as f32).round() as i32;
             span.world.set(wx, deck_y, wz, style.deck_id);
         }
 
-        // Pasamanos continuo a ambos lados (se nota como puente desde
-        // lejos, no como una fila de bloques sueltos), con postes mas
-        // altos cada 3 pasos para que no quede parejo/monotono.
+        // Viga continua de borde a la altura del tablero + pasamanos
+        // horizontal un bloque arriba, a los dos lados, en TODOS los pasos
+        // (no solo cada tanto) para que se lea como baranda continua.
         for sign in [-1.0f32, 1.0] {
-            let rx = (cx + perp_x * 1.5 * sign).round() as i32;
-            let rz = (cz + perp_z * 1.5 * sign).round() as i32;
-            if i % 3 == 0 {
-                span.world.fill_box((rx, deck_y + 1, rz), (rx, deck_y + 3, rz), style.rail_id);
-            } else {
-                span.world.set(rx, deck_y + 1, rz, style.rail_id);
+            let bx = (cx + perp_x * 2.0 * sign).round() as i32;
+            let bz = (cz + perp_z * 2.0 * sign).round() as i32;
+            span.world.set(bx, deck_y, bz, style.beam_id);
+            span.world.set(bx, deck_y + 1, bz, style.beam_id);
+        }
+
+        // Postes cada 5 pasos, SOLO 2 de alto sobre el pasamanos (nunca
+        // cuelgan, siempre suben), con un farol arriba de cada uno.
+        if i % 5 == 0 {
+            for sign in [-1.0f32, 1.0] {
+                let px = (cx + perp_x * 2.0 * sign).round() as i32;
+                let pz = (cz + perp_z * 2.0 * sign).round() as i32;
+                span.world.set(px, deck_y + 2, pz, style.beam_id);
+                span.world.set(px, deck_y + 3, pz, style.lamp_id);
             }
         }
 
-        // Linternas emisivas cada 6 pasos, alternando de lado.
-        if i % 6 == 3 {
-            let sign = if (i / 6) % 2 == 0 { 1.0 } else { -1.0 };
-            let lx = (cx + perp_x * 1.5 * sign).round() as i32;
-            let lz = (cz + perp_z * 1.5 * sign).round() as i32;
-            span.world.set(lx, deck_y + 3, lz, style.lamp_id);
+        // Estandartes colgando de la mitad de los postes (cada 10 pasos),
+        // alternando de lado, un bloque afuera de la viga.
+        if i % 10 == 5 {
+            let sign = if (i / 10) % 2 == 0 { 1.0 } else { -1.0 };
+            let bx = (cx + perp_x * 2.8 * sign).round() as i32;
+            let bz = (cz + perp_z * 2.8 * sign).round() as i32;
+            span.world.set(bx, deck_y, bz, style.banner_id);
         }
 
-        if style.arch {
-            // Arcos de soporte cada 5 pasos (no en las puntas): dos
-            // pilares bajando desde el tablero con un dintel que los une.
-            if i % 5 == 0 && t > 0.12 && t < 0.88 {
-                let drop = 3;
-                for sign in [-1.0f32, 1.0] {
-                    let rx = (cx + perp_x * 1.3 * sign).round() as i32;
-                    let rz = (cz + perp_z * 1.3 * sign).round() as i32;
-                    span.world.fill_box((rx, deck_y - drop, rz), (rx, deck_y - 1, rz), style.support_id);
-                }
-                for w in -1..=1 {
-                    let wx = (cx + perp_x * w as f32).round() as i32;
-                    let wz = (cz + perp_z * w as f32).round() as i32;
-                    span.world.set(wx, deck_y - drop, wz, style.support_id);
-                }
+        // Arcos de soporte cortos y anchos debajo (curva de medio punto
+        // aproximada: dos patas + dintel, hueco en el medio para que se
+        // vea como un arco real, no un pilar macizo) -- maximo 3 bloques
+        // de caida, muy por debajo del limite de 6.
+        if arch_steps.contains(&i) {
+            for sign in [-1.0f32, 1.0] {
+                let lx = (cx + perp_x * sign).round() as i32;
+                let lz = (cz + perp_z * sign).round() as i32;
+                span.world.fill_box((lx, deck_y - 3, lz), (lx, deck_y - 1, lz), style.arch_id);
             }
-            // Estalactita en el punto mas alto del arco.
-            if i == steps / 2 {
-                let sx = cx.round() as i32;
-                let sz = cz.round() as i32;
-                place_pillar(&mut span.world, sx, sz, deck_y - 6, deck_y - 1, style.support_id);
-                span.world.set(sx, deck_y - 7, sz, style.support_id);
-            }
-        } else {
-            // Vigas cruzadas cada 4 pasos, debajo del tablero.
-            if i % 4 == 0 {
-                for w in -1..=1 {
-                    let wx = (cx + perp_x * w as f32).round() as i32;
-                    let wz = (cz + perp_z * w as f32).round() as i32;
-                    span.world.set(wx, deck_y - 1, wz, style.support_id);
-                }
-            }
-            // Cuerdas: cuelgan de un cable principal recto entre las
-            // puntas de los dos pilares hasta el pasamanos del tablero.
-            if i % 2 == 0 {
-                let pillar_top_a = local_a.y.round() + 8.0;
-                let pillar_top_b = local_b.y.round() + 8.0;
-                let cable_y = (pillar_top_a + (pillar_top_b - pillar_top_a) * t) as i32;
-                let rail_y = deck_y + 1;
-                if cable_y > rail_y {
-                    for sign in [-1.0f32, 1.0] {
-                        let rx = (cx + perp_x * 1.5 * sign).round() as i32;
-                        let rz = (cz + perp_z * 1.5 * sign).round() as i32;
-                        span.world.fill_box((rx, rail_y, rz), (rx, cable_y, rz), style.support_id);
-                    }
-                }
+            for w in -1..=1 {
+                let wx = (cx + perp_x * w as f32).round() as i32;
+                let wz = (cz + perp_z * w as f32).round() as i32;
+                span.world.set(wx, deck_y - 3, wz, style.arch_id);
             }
         }
     }
@@ -1230,14 +1207,14 @@ fn build_bridge(islands: &mut Vec<Island>, idx_a: usize, hm_a: &Heightmap, pa: &
     let edge_b_world = islands[idx_b].to_world_point(Vec3::new(edge_b.0 as f32, edge_b.2 as f32, edge_b.1 as f32));
     let bridge_y_world = (((edge_a_world.y + edge_b_world.y) * 0.5).round() as i32).max(min_world_y);
 
-    // Estribos: aplana y refuerza un parche de 5x5 en cada isla (en SUS
-    // coordenadas locales) para que la transicion al puente no tenga
-    // escalon y se lea como un anclaje real, no un tablero que arranca de
-    // la nada.
+    // Estribos: aplana y refuerza una pequena plaza de 7x7 (empedrada, el
+    // mismo material del tablero) en cada isla (en SUS coordenadas locales)
+    // para que la transicion al puente no tenga escalon y se lea como un
+    // anclaje real integrado al terreno, no un tablero que arranca de la nada.
     let local_y_a = bridge_y_world - islands[idx_a].offset.1;
-    flatten_area(&mut islands[idx_a].world, edge_a.0 - 2, edge_a.1 - 2, edge_a.0 + 2, edge_a.1 + 2, local_y_a, style.deck_id);
+    flatten_area(&mut islands[idx_a].world, edge_a.0 - 3, edge_a.1 - 3, edge_a.0 + 3, edge_a.1 + 3, local_y_a, style.deck_id);
     let local_y_b = bridge_y_world - islands[idx_b].offset.1;
-    flatten_area(&mut islands[idx_b].world, edge_b.0 - 2, edge_b.1 - 2, edge_b.0 + 2, edge_b.1 + 2, local_y_b, style.deck_id);
+    flatten_area(&mut islands[idx_b].world, edge_b.0 - 3, edge_b.1 - 3, edge_b.0 + 3, edge_b.1 + 3, local_y_b, style.deck_id);
 
     let a_anchor = Vec3::new(edge_a_world.x, bridge_y_world as f32, edge_a_world.z);
     let b_anchor = Vec3::new(edge_b_world.x, bridge_y_world as f32, edge_b_world.z);
@@ -1398,7 +1375,7 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     clear_trees_near(&mut islands[sat_a.index].world, sat_a.params.center_x, sat_a.params.center_z, 4);
     build_statue(&mut islands[sat_a.index].world, &sat_a.heightmap, sat_a.params.center_x, sat_a.params.center_z);
     let monolith_center_world = island_world_center(&islands, &sat_a);
-    let wood_bridge = BridgeStyle { deck_id: block::OAK_PLANKS, rail_id: block::OAK_LOG, support_id: block::OAK_LOG, lamp_id: block::GLOWSTONE, arch: false, curve_amount: 3.0 };
+    let wood_bridge = BridgeStyle { deck_id: block::STONE, beam_id: block::OAK_LOG, arch_id: block::STONE, lamp_id: block::LANTERN, banner_id: block::BANNER };
     build_bridge(&mut islands, main.index, &main.heightmap, &main.params, sat_a.index, &sat_a.heightmap, &sat_a.params, water_level_world + 2, &wood_bridge);
 
     // Isla satelite B: jardin con fuente.
@@ -1461,7 +1438,7 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
 
     hang_glowstone_edge(&mut islands[nether.index].world, &nether.heightmap, ncx, ncz, nr, 5, nseed);
 
-    let nether_bridge = BridgeStyle { deck_id: block::NETHER_BRICKS, rail_id: block::OBSIDIAN, support_id: block::NETHER_BRICKS, lamp_id: block::GLOWSTONE, arch: true, curve_amount: 2.5 };
+    let nether_bridge = BridgeStyle { deck_id: block::NETHER_BRICKS, beam_id: block::BLACKSTONE, arch_id: block::BLACKSTONE, lamp_id: block::GLOWSTONE, banner_id: block::BANNER };
     build_bridge(&mut islands, main.index, &main.heightmap, &main.params, nether.index, &nether.heightmap, &nether.params, offset_n.1 + 4, &nether_bridge);
     let nether_center_world = island_world_center(&islands, &nether);
 
@@ -1518,7 +1495,7 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
         build_chorus_grove(&mut islands[end_island.index].world, &end_island.heightmap, chx, chz, 6, eseed ^ (angle as u32));
     }
 
-    let end_bridge = BridgeStyle { deck_id: block::END_STONE_BRICKS, rail_id: block::PURPUR, support_id: block::PURPUR, lamp_id: block::END_ROD, arch: true, curve_amount: 2.5 };
+    let end_bridge = BridgeStyle { deck_id: block::END_STONE_BRICKS, beam_id: block::PURPUR, arch_id: block::PURPUR, lamp_id: block::END_ROD, banner_id: block::BANNER };
     build_bridge(&mut islands, main.index, &main.heightmap, &main.params, end_island.index, &end_island.heightmap, &end_island.params, offset_e.1 - 2, &end_bridge);
     let end_center_world = island_world_center(&islands, &end_island);
 

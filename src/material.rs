@@ -53,7 +53,8 @@ pub mod block {
     pub const DIRT_PATH: u8 = 43;
     pub const CROPS: u8 = 44;
     pub const LANTERN: u8 = 45;
-    pub const COUNT: usize = 46;
+    pub const BANNER: u8 = 46;
+    pub const COUNT: usize = 47;
 }
 
 pub struct FaceTex {
@@ -414,6 +415,11 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     // glowstone aparte adentro), para poner uno por bloque en postes/entradas.
     let lantern = Material::uniform("lantern", seed, MatParams { specular_coef: 0.15, specular_exp: 20.0, emission: Vec3::new(1.0, 0.72, 0.38) * 1.9, ..Default::default() });
     entries[block::LANTERN as usize] = Some(lantern);
+
+    // Estandarte de puente: tela colgando (alpha cutout), sin brillo.
+    let mut banner = Material::uniform("banner", seed, MatParams { specular_coef: 0.02, specular_exp: 4.0, ..Default::default() });
+    banner.alpha_cutout = true;
+    entries[block::BANNER as usize] = Some(banner);
 
     MaterialTable { entries }
 }

@@ -25,6 +25,8 @@ renders/before_after/*
 !renders/before_after/part4_end_close_day.png
 !renders/before_after/part4_overview_day.png
 !renders/before_after/part4_overview_night.png
+!renders/before_after/part5_village_day.png
+!renders/before_after/part5_village_night.png
 
 # Idem para las capturas de verificacion sueltas de las fases 1-9 (directo
 # en renders/, no en before_after/): solo quedan versionadas las que usa el

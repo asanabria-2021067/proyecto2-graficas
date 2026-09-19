@@ -22,10 +22,11 @@ Rust desde cero (sin librerias externas para la logica: matematica,
 texturas, ruido, PRNG, paralelismo y raytracing son todo codigo propio).
 Cinco islas flotantes generadas proceduralmente, cada una con su propio
 perfil de terreno: la isla principal (faro, lago con cascada, muelle,
-casita, dos islas satelite), una isla compacta del Nether (arboles hongo
-carmesi/distorsionado, formacion de blackstone con lava, fuegos, portal) y
-una isla del End con una ciudad de torres de purpur, unidas por puentes de
-verdad (tablero ancho, barandas, arcos o cables, linternas).
+casita, un PUEBLO con 3 casas/torre-capilla/pozo/parcelas de cultivo, dos
+islas satelite), una isla del Nether (arboles hongo carmesi/distorsionado,
+formacion de blackstone con lava, fuegos, portal) y una isla del End -- baja
+y cerca de la principal, con una ciudad de torres de purpur -- unidas por
+puentes de verdad (tablero ancho, barandas, arcos o cables, linternas).
 
 ![Vista general de las 5 islas](renders/before_after/p6_final_general_day.png)
 
@@ -80,7 +81,7 @@ normal maps on/off y el tiempo de generacion del terreno.
 ## Materiales
 
 Cada material tiene su propia textura (16x16, generada por codigo si no hay
-un `.bmp` en `assets/textures/`) y sus propios parametros de shading. 39 en
+un `.bmp` en `assets/textures/`) y sus propios parametros de shading. 46 en
 total, organizados por donde viven en la escena.
 
 ### Base (isla principal y satelites)
@@ -137,11 +138,26 @@ total, organizados por donde viven en la escena.
 | Chorus plant (tallo) | solido con nudos | morado oscuro | 0.04 / 6 | 0 | 0 | 1.0 | - |
 | Magenta glass | marco claro, centro casi transparente | magenta | 0.6 / 120 | 0.85 | 0.08 | 1.5 | - |
 
+### Pueblo (isla principal)
+
+| Material | Textura | Albedo | Specular (coef/exp) | Transparencia | Reflectividad | IOR | Emision |
+|---|---|---|---|---|---|---|---|
+| Cobblestone | piedras irregulares con mortero, normal map | gris | 0.08 / 12 | 0 | 0.02 | 1.0 | - |
+| Stone (liso) | uniforme, normal map suave | gris claro | 0.12 / 18 | 0 | 0.04 | 1.0 | - |
+| Farmland | tierra removida con surcos | marron oscuro | 0.02 / 4 | 0 | 0 | 1.0 | - |
+| Dirt path | grisaceo apisonado, a proposito distinto del marron de oak_planks | gris-tostado | 0.03 / 6 | 0 | 0 | 1.0 | - |
+| Crops | tallos con alpha cutout, puntas doradas | verde/dorado | 0.03 / 6 | 0 | 0 | 1.0 | - |
+| Lantern | marco oscuro, centro calido opaco | negro/amarillo calido | 0.15 / 20 | 0 | 0 | 1.0 | (1.0, 0.72, 0.38) x 1.9 |
+
+La cerca de las parcelas reutiliza `oak_log` en postes delgados en vez de
+un material nuevo.
+
 Normal map real (derivado por Sobel de la propia textura, o cargado desde
 `assets/textures/<nombre>_n.bmp` si existe) en: `stone_bricks`,
 `oak_planks`, `oak_log`, `iron_block`, `netherrack`, `nether_bricks`,
 `crimson_stem`, `warped_stem`, `nether_wart_block`, `warped_wart_block`,
-`blackstone`, `end_stone`, `end_stone_bricks`, `purpur`, `purpur_pillar`.
+`blackstone`, `end_stone`, `end_stone_bricks`, `purpur`, `purpur_pillar`,
+`cobblestone`, `stone`.
 El `portal` tiene un normal map propio generado aparte (no derivado del
 albedo): un remolino via atan2/seno/coseno, para que la refraccion se vea
 distorsionada en vez de plana.
@@ -212,27 +228,30 @@ End + todos sus puentes/caminos y mini-islas):
 
 | Resolucion | ms/frame | FPS equivalente |
 |---|---|---|
-| 640x360 (resolucion del pase "en movimiento" a calidad media) | 49.5 | ~20 |
-| 1280x720 | 178.2 | ~5.6 |
+| 640x360 (resolucion del pase "en movimiento" a calidad media) | 39.6 | ~25 |
+| 1280x720 | 156.2 | ~6.4 |
 
-Rotando a calidad media la ventana corre a resolucion reducida (~20 FPS
+Rotando a calidad media la ventana corre a resolucion reducida (~25 FPS
 equivalente, fluido); el pase de resolucion completa es ahora PROGRESIVO
 (ver "Refinamiento progresivo" arriba), asi que nunca bloquea de una sola
-vez aunque tarde varios cientos de ms en total. El costo subio un poco
-respecto a partes anteriores (mas islas: Nether y End compactas pero con
-mucho contenido nuevo, mas mini-islas de puentes/descanso) pero se
-mantiene fluido para rotar; no hizo falta optimizacion adicional (limite
-de luces por punto, profundidad de recursion, early exits ya estaban
-puestos desde antes). Detalle completo, incluido el desglose pasada por
-pasada del refinamiento progresivo, en `BENCHMARK.md`.
+vez aunque tarde varios cientos de ms en total. A pesar de agregar el
+pueblo completo (casas, torre, parcelas, caminos) y agrandar el End/Nether,
+el costo BAJO ~12% respecto al cierre anterior: menos arboles base en la
+principal y el End mucho mas cerca en altura de la principal (antes flotaba
+32 bloques arriba, ahora 9) le ahorran trabajo al DDA. No hizo falta
+optimizacion adicional (limite de luces por punto, profundidad de
+recursion, early exits ya estaban puestos desde antes). Detalle completo,
+incluido el desglose pasada por pasada del refinamiento progresivo, en
+`BENCHMARK.md`.
 
 ## Galeria
 
 | De dia | De noche |
 |---|---|
 | ![Vista general de dia](renders/before_after/p6_final_general_day.png) | ![Vista general de noche](renders/before_after/p6_final_general_night.png) |
-| ![Puentes de verdad](renders/before_after/p6_final_bridges.png) | ![Nether de noche](renders/before_after/p6_final_nether_night.png) |
+| ![Puentes de verdad y el pueblo](renders/before_after/p6_final_bridges.png) | ![Nether de noche](renders/before_after/p6_final_nether_night.png) |
 | ![Lago azul-turquesa con orilla](renders/before_after/p6_final_lake.png) | ![Ciudad de torres del End](renders/before_after/p6_final_end_city.png) |
+| ![El pueblo de dia](renders/before_after/part5_village_day.png) | ![El pueblo de noche, faroles encendidos](renders/before_after/part5_village_night.png) |
 
 ## Guion sugerido para el video
 
@@ -251,11 +270,19 @@ pasada del refinamiento progresivo, en `BENCHMARK.md`.
    central, escaleras diagonales, las dos torres secundarias con
    ventanas de magenta_glass), el barco de purpur y los bosquecitos de
    chorus.
-6. Tecla `4` para volver a la principal: acercarse al faro (glowstone a
-   traves del vidrio) y al lago (agua azul-turquesa con reflejo del cielo,
-   orilla de arena visible, cascada por el borde).
+6. Tecla `4` para volver a la principal: recorrer el pueblo (casas, la
+   torre-capilla, el pozo, las parcelas con canal de agua y crops, los
+   caminos), acercarse al faro (glowstone a traves del vidrio) y al lago
+   (agua azul-turquesa con reflejo del cielo, orilla de arena visible,
+   cascada por el borde).
 7. Alternar normal maps (`N`) de cerca sobre nether_bricks o stone_bricks
    para mostrar la diferencia con luz rasante.
 8. Regenerar el archipielago (`G`) un par de veces para mostrar que las 5
-   islas, sus puentes y todas sus estructuras se reconstruyen con
-   cualquier semilla.
+   islas, sus puentes, el pueblo y todas sus estructuras se reconstruyen
+   con cualquier semilla.
+
+El video grabado con `--record` (ver `record.md`) sigue este mismo recorrido
+como guion fijo de camara (`src/record.rs::timeline`, 79s): vista general,
+un tramo dedicado al pueblo (~6s, entre la vista general y el acercamiento
+al faro), faro/lago, monolito, normal maps on/off, noche, Nether de cerca,
+End de cerca, y regeneracion con 2 semillas nuevas antes de la toma final.

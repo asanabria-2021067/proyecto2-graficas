@@ -1279,6 +1279,9 @@ pub struct SceneIslands {
     /// Isla satelite del monolito de iron_block (para encuadrarlo de cerca
     /// en `--record`, ver `record.rs`).
     pub monolith_center: Vec3,
+    /// Centro del pueblo en la isla principal (para encuadrarlo de cerca en
+    /// `--record`, igual que el monolito).
+    pub village_center: Vec3,
 }
 
 /// Construye la isla principal (el faro, el lago, la casita) y sus dos
@@ -1325,6 +1328,8 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     // torre (centro): 3 casas y 2 parcelas intercaladas cada 60 grados, el
     // pozo mas cerca del centro en el sexto hueco.
     let village_center = polar(cx, cz, 200.0, r * 0.48);
+    let village_top_y = main.heightmap.top_at(village_center.0, village_center.1).unwrap_or(main.params.top_y);
+    let village_center_world = islands[main.index].to_world_point(Vec3::new(village_center.0 as f32, village_top_y as f32, village_center.1 as f32));
     clear_trees_near(&mut islands[main.index].world, village_center.0, village_center.1, 13);
 
     // Offsets en cartesianas (no polares): con estructuras cuadradas, dos
@@ -1520,5 +1525,5 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     // 2-3 mini-islas de end_stone flotando alrededor de la isla principal del End.
     build_mini_end_islands(&mut islands, end_center_world, er, eseed);
 
-    SceneIslands { islands, main_center: main_center_world, main_radius: r, nether_center: nether_center_world, end_center: end_center_world, monolith_center: monolith_center_world }
+    SceneIslands { islands, main_center: main_center_world, main_radius: r, nether_center: nether_center_world, end_center: end_center_world, monolith_center: monolith_center_world, village_center: village_center_world }
 }

@@ -50,16 +50,17 @@ struct WorldData {
     nether_center: Vec3,
     end_center: Vec3,
     monolith_center: Vec3,
+    village_center: Vec3,
     gen_ms: f64,
 }
 
 fn build_world_data(seed: u32) -> WorldData {
     let t0 = std::time::Instant::now();
-    let SceneIslands { islands, main_center, main_radius, nether_center, end_center, monolith_center } = build_lighthouse_scene(seed);
+    let SceneIslands { islands, main_center, main_radius, nether_center, end_center, monolith_center, village_center } = build_lighthouse_scene(seed);
     let materials = material::build_material_table(seed);
     let lights = build_light_grid(&islands, &materials, 8.0);
     let gen_ms = t0.elapsed().as_secs_f64() * 1000.0;
-    WorldData { islands, materials, lights, main_center, main_radius, nether_center, end_center, monolith_center, gen_ms }
+    WorldData { islands, materials, lights, main_center, main_radius, nether_center, end_center, monolith_center, village_center, gen_ms }
 }
 
 /// La distancia maxima de zoom tiene que alcanzar para que las 5 islas
@@ -71,6 +72,7 @@ fn build_camera(args: &Args, wd: &WorldData) -> Camera {
         "nether" => wd.nether_center,
         "end" => wd.end_center,
         "monolith" => wd.monolith_center,
+        "village" => wd.village_center,
         _ => wd.main_center,
     };
     Camera::new(center, args.yaw, args.pitch, args.dist, wd.main_radius * 0.6, wd.main_radius * 9.0, 50.0)
@@ -216,7 +218,7 @@ fn render_record_frame(ctx: &RecordCtx, night_blend: f32, normalmaps_blend: f32,
 }
 
 fn centers_of(wd: &WorldData) -> record::Centers {
-    record::Centers { main: wd.main_center, nether: wd.nether_center, end: wd.end_center, monolith: wd.monolith_center }
+    record::Centers { main: wd.main_center, nether: wd.nether_center, end: wd.end_center, monolith: wd.monolith_center, village: wd.village_center }
 }
 
 /// `duration*fps` cuadros no alcanzan a incluir un cuadro exactamente EN

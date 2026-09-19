@@ -105,7 +105,17 @@ pub fn build_light_grid(islands: &[Island], materials: &MaterialTable, cell_size
                     if intensity <= 0.001 {
                         continue;
                     }
-                    let radius = 4.0 + intensity * 6.0;
+                    // Bajado de 4.0+intensity*6.0 (parte 4, sesion 5): con el
+                    // pueblo (muchos faroles chicos agrupados) el radio viejo
+                    // (~15-19 para lantern/glowstone) hacia que casi todas las
+                    // luces de una zona cayeran en la MISMA celda de la
+                    // grilla, y que un punto cerca del pueblo tuviera que
+                    // evaluar (rayo de sombra incluido) muchas mas luces de
+                    // las que realmente aportan contraste visible. Un radio
+                    // mas chico sigue iluminando el entorno inmediato de cada
+                    // farol/poste sin que su influencia se solape tanto con
+                    // la de sus vecinos.
+                    let radius = 3.0 + intensity * 3.0;
                     let local = Vec3::new(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5);
                     lights.push(PointLight {
                         pos: island.to_world_point(local),

@@ -4,7 +4,11 @@ use crate::lights::LightGrid;
 use crate::material::{FaceTex, Material, MaterialTable};
 use crate::math::{Ray, Vec3};
 
-pub const MAX_LIGHTS_PER_POINT: usize = 4;
+// Bajado de 4 a 3 (parte 4, sesion 5): el pueblo agrego muchos faroles
+// chicos agrupados en poco espacio, y cada luz evaluada es un rayo de
+// sombra completo -- 3 ya cubre bien el caso comun (sol + 1-2 luces locales
+// simultaneas) sin pagar por una cuarta que casi nunca aporta contraste.
+pub const MAX_LIGHTS_PER_POINT: usize = 3;
 const SHADOW_MAX_DIST: f32 = 256.0;
 const SHADOW_EPS: f32 = 1e-3;
 const MAX_TRANSPARENT_STEPS: u32 = 8;

@@ -21,12 +21,14 @@ Diorama estilo Minecraft renderizado 100% con raytracing en CPU, escrito en
 Rust desde cero (sin librerias externas para la logica: matematica,
 texturas, ruido, PRNG, paralelismo y raytracing son todo codigo propio).
 Cinco islas flotantes generadas proceduralmente, cada una con su propio
-perfil de terreno: la isla principal (faro, lago con cascada, muelle,
-casita, un PUEBLO con 3 casas/torre-capilla/pozo/parcelas de cultivo, dos
-islas satelite), una isla del Nether (arboles hongo carmesi/distorsionado,
-formacion de blackstone con lava, fuegos, portal) y una isla del End -- baja
-y cerca de la principal, con una ciudad de torres de purpur -- unidas por
-puentes de verdad (tablero ancho, barandas, arcos o cables, linternas).
+perfil de terreno: la isla principal (faro, lago azul-turquesa con cascada,
+muelle, casita, un PUEBLO con 3 casas/torre-capilla/pozo/parcelas de
+cultivo, dos islas satelite), una isla del Nether (arboles hongo carmesi/
+distorsionado, formacion de blackstone con lava, fuegos, portal) y una isla
+del End -- a lo sumo 6-8 bloques por encima de la principal, no flotando
+muy arriba -- con una ciudad de torres de purpur, unidas por puentes de
+verdad (tablero de piedra, viga y pasamanos de madera, postes con farol,
+estandartes, arcos de piedra debajo).
 
 ![Vista general de las 5 islas](renders/before_after/p6_final_general_day.png)
 
@@ -81,7 +83,7 @@ normal maps on/off y el tiempo de generacion del terreno.
 ## Materiales
 
 Cada material tiene su propia textura (16x16, generada por codigo si no hay
-un `.bmp` en `assets/textures/`) y sus propios parametros de shading. 46 en
+un `.bmp` en `assets/textures/`) y sus propios parametros de shading. 47 en
 total, organizados por donde viven en la escena.
 
 ### Base (isla principal y satelites)
@@ -152,6 +154,19 @@ total, organizados por donde viven en la escena.
 La cerca de las parcelas reutiliza `oak_log` en postes delgados en vez de
 un material nuevo.
 
+### Puentes
+
+| Material | Textura | Albedo | Specular (coef/exp) | Transparencia | Reflectividad | IOR | Emision |
+|---|---|---|---|---|---|---|---|
+| Banner | tela colgando con alpha cutout, franja dorada arriba, puntas en V abajo | rojo/dorado | 0.02 / 4 | 0 | 0 | 1.0 | - |
+
+Estandarte que cuelga de la mitad de los postes de cada puente (ver
+"Puentes de verdad" mas abajo). El tablero, la viga/pasamanos y los arcos
+reutilizan materiales ya existentes (piedra clara `stone` + `oak_log` en
+los satelites, `nether_bricks` + `blackstone` en el Nether, `end_stone_bricks`
++ `purpur` en el End), con `lantern`/`glowstone`/`end_rod` como farol segun
+el destino.
+
 Normal map real (derivado por Sobel de la propia textura, o cargado desde
 `assets/textures/<nombre>_n.bmp` si existe) en: `stone_bricks`,
 `oak_planks`, `oak_log`, `iron_block`, `netherrack`, `nether_bricks`,
@@ -171,13 +186,15 @@ distorsionada en vez de plana.
   de entrada) y solo corre el DDA voxel a voxel dentro de las que
   realmente puede llegar a tocar. Sombras, reflejos y refracciones cruzan
   islas sin logica especial.
-- **Puentes reutilizables con curva real**: `BridgeStyle` +
-  `build_bridge_span` arman cada puente como su propia mini-isla, con el
-  tablero siguiendo una catenaria (colgantes) o un arco (de piedra),
-  pasamanos continuo con postes, linternas cada 6 pasos, y subestructura
-  visible debajo (vigas cruzadas + cuerdas colgando de pilares altos, o
-  arcos de soporte + estalactita). Si el hueco entre dos islas es muy
-  grande, se insertan mini-islas de descanso en el medio.
+- **Puentes reutilizables, un solo esqueleto**: `BridgeStyle` +
+  `build_bridge_span` arman cada puente como su propia mini-isla; tablero
+  recto de 3 de ancho, viga de borde y pasamanos horizontal continuos,
+  postes de 2 de alto (siempre arriba del tablero, nunca cuelgan) cada 5
+  pasos con un farol encima, estandartes colgando de la mitad de los
+  postes, y 2-3 arcos de piedra cortos y anchos debajo (patas + dintel,
+  maximo 3 bloques de caida). Solo cambian los materiales segun el destino
+  (`BridgeStyle`). Si el hueco entre dos islas es muy grande, se insertan
+  mini-islas de descanso en el medio.
 - **Fresnel (Schlick) y Snell**: la reflexion y la refraccion se calculan
   juntas -- Snell da la direccion refractada con el IOR del material,
   Fresnel-Schlick reparte cuanta energia va a reflexion y cuanta a
@@ -228,20 +245,19 @@ End + todos sus puentes/caminos y mini-islas):
 
 | Resolucion | ms/frame | FPS equivalente |
 |---|---|---|
-| 640x360 (resolucion del pase "en movimiento" a calidad media) | 39.6 | ~25 |
-| 1280x720 | 156.2 | ~6.4 |
+| 640x360 (resolucion del pase "en movimiento" a calidad media) | 32.6 | ~30.7 |
+| 1280x720 | 128.4 | ~7.8 |
 
-Rotando a calidad media la ventana corre a resolucion reducida (~25 FPS
+Rotando a calidad media la ventana corre a resolucion reducida (~30.7 FPS
 equivalente, fluido); el pase de resolucion completa es ahora PROGRESIVO
 (ver "Refinamiento progresivo" arriba), asi que nunca bloquea de una sola
-vez aunque tarde varios cientos de ms en total. A pesar de agregar el
-pueblo completo (casas, torre, parcelas, caminos) y agrandar el End/Nether,
-el costo BAJO ~12% respecto al cierre anterior: menos arboles base en la
-principal y el End mucho mas cerca en altura de la principal (antes flotaba
-32 bloques arriba, ahora 9) le ahorran trabajo al DDA. No hizo falta
-optimizacion adicional (limite de luces por punto, profundidad de
-recursion, early exits ya estaban puestos desde antes). Detalle completo,
-incluido el desglose pasada por pasada del refinamiento progresivo, en
+vez aunque tarde varios cientos de ms en total. Rehacer los 4 puentes con
+postes/farol cada 5 pasos (antes cada 6, alternando de lado -- la mitad de
+luces) bajo el rendimiento en serio (~22 a ~16 FPS en calidad media). Se
+bajo el radio de cada luz (`lights.rs`) y el limite de luces evaluadas por
+punto (`shading.rs`, `MAX_LIGHTS_PER_POINT` 4 -> 3): ~-35% en 640x360 y
+1280x720, bien por encima del piso de 20-22 FPS. Detalle completo, incluido
+el desglose pasada por pasada del refinamiento progresivo, en
 `BENCHMARK.md`.
 
 ## Galeria
@@ -259,9 +275,10 @@ incluido el desglose pasada por pasada del refinamiento progresivo, en
    sus 2 satelites, Nether y End -- en un solo cuadro, puentes bien
    visibles entre todas) unos segundos quieto.
 2. Activar auto-rotacion (`R`) para dar una vuelta completa al archipielago.
-3. Detener la rotacion. Cruzar uno de los puentes colgantes de madera hacia
-   el monolito de hierro (reflejo) mostrando el tablero curvo, las
-   barandas y las cuerdas colgando de los pilares.
+3. Detener la rotacion. Cruzar uno de los puentes de piedra hacia el
+   monolito de hierro (reflejo), volando pegado al tablero para mostrar los
+   postes con farol, la viga y el pasamanos de madera, los estandartes
+   colgando y los arcos de soporte debajo.
 4. Tecla `5` para centrar suavemente la camara en el Nether, alternar a
    noche (`T`) y hacer zoom (`Q`/`E`) hacia los arboles hongo (carmesi y
    distorsionado), la formacion de blackstone con la cascada de lava, los
@@ -282,7 +299,9 @@ incluido el desglose pasada por pasada del refinamiento progresivo, en
    con cualquier semilla.
 
 El video grabado con `--record` (ver `record.md`) sigue este mismo recorrido
-como guion fijo de camara (`src/record.rs::timeline`, 79s): vista general,
+como guion fijo de camara (`src/record.rs::timeline`, 83s): vista general,
 un tramo dedicado al pueblo (~6s, entre la vista general y el acercamiento
-al faro), faro/lago, monolito, normal maps on/off, noche, Nether de cerca,
-End de cerca, y regeneracion con 2 semillas nuevas antes de la toma final.
+al faro), faro/lago, un puente de cerca (~4s, postes/farol/arcos/
+estandartes) camino al monolito, normal maps on/off, noche, Nether de
+cerca, End de cerca, y regeneracion con 2 semillas nuevas antes de la toma
+final.

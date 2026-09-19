@@ -90,6 +90,7 @@ const CAP_MAIN: &str = "ISLA PRINCIPAL: FARO Y CASITA";
 const CAP_VILLAGE: &str = "PUEBLO: CASAS, TORRE, PARCELAS Y POZO";
 const CAP_LAKE: &str = "LAGO: REFRACCION IOR 1.33 Y REFLEJO FRESNEL";
 const CAP_MONOLITH: &str = "REFLEJO EN EL MONOLITO - IRON BLOCK Y CIELO";
+const CAP_BRIDGE: &str = "PUENTE DE CERCA: FAROLES, ARCOS Y ESTANDARTES";
 const CAP_NM_OFF: &str = "NORMAL MAPS OFF - LUZ RASANTE EN STONE BRICKS";
 const CAP_NM_FADE: &str = "NORMAL MAPS: FUNDIDO OFF A ON";
 const CAP_NM_ON: &str = "NORMAL MAPS ON - RELIEVE CON SOBEL";
@@ -100,7 +101,7 @@ const CAP_SEED_B: &str = "REGENERACION - SEMILLA B";
 const CAP_SEED_C: &str = "REGENERACION - SEMILLA C";
 const CAP_FINAL: &str = "DIORAMA PROCEDURAL COMPLETO";
 
-/// Guion de 79s, un keyframe por limite de tramo (18 en total, ver
+/// Guion de 83s, un keyframe por limite de tramo (20 en total, ver
 /// comentarios inline con los segundos exactos). Cada tramo mueve como
 /// maximo un par de cosas a la vez (camara, o dia/noche, o normal maps, o
 /// semilla) para que quede claro en pantalla que esta cambiando; la unica
@@ -109,14 +110,17 @@ const CAP_FINAL: &str = "DIORAMA PROCEDURAL COMPLETO";
 /// asi se ve como un solo movimiento de camara continuo, no como una serie
 /// de cortes.
 ///
-/// Recalculado despues de mover/agrandar el End y el Nether (ver
-/// `structures.rs`): el End ahora flota apenas mas arriba que la principal
-/// (antes offset.y +32, ahora +9) y mas cerca (gap 10 en vez de 16), y tanto
-/// el Nether (radio 11->15) como el End (radio 16->22) crecieron. Los tramos
-/// g2/h1/h2/i1 (los que miran de cerca esas dos islas) necesitan mas
-/// distancia y menos pitch que antes para no terminar con la camara metida
-/// en el terreno -- afinado a mano con `--render --center nether|end` a
-/// varias combinaciones hasta que el encuadre mostraba la isla entera.
+/// Recalculado (sesion 5) tras rehacer los puentes por completo (ver
+/// `structures.rs::build_bridge_span`: ya no cuelgan, tablero de piedra con
+/// postes/farol/arcos) y bajar/acercar el End otra vez (offset.y +9 -> +6,
+/// gap 10 -> 7): la vista general (a, b, i2, j) ahora usa mas pitch y menos
+/// distancia para que la escena, mas compacta, llene mejor el cuadro. El
+/// tramo `d` se parte en tres (d1 vuelo ancho, d2 -- la toma corta de 3-4s
+/// que recorre el puente de cerca pegado al tablero, d3 llegada al
+/// monolito) para mostrar los postes/farol/arcos nuevos. g2/h1/h2/i1 (Nether/
+/// End de cerca) no cambiaron de radio esta vez asi que sus valores de la
+/// sesion anterior siguen sirviendo -- reverificados con `--render --center
+/// nether|end` igual, por las dudas.
 pub fn timeline(seed_a: u32, seed_b: u32, seed_c: u32) -> Vec<Keyframe> {
     vec![
         // a) 0-8s: vista general de dia, rotando.
@@ -128,17 +132,23 @@ pub fn timeline(seed_a: u32, seed_b: u32, seed_c: u32) -> Vec<Keyframe> {
         Keyframe { t: 14.0, yaw_deg: 70.0, pitch_deg: 26.0, dist_scale: 5.3, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "b: principal", caption: CAP_MAIN },
         // c) 21-27s (6s): orbita lenta de cerca sobre el lago.
         Keyframe { t: 21.0, yaw_deg: 110.0, pitch_deg: 14.0, dist_scale: 1.0, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "c: lago", caption: CAP_LAKE },
-        // d) 27-31s (4s): vuelo hasta el monolito y de vuelta hacia el faro.
-        Keyframe { t: 27.0, yaw_deg: 150.0, pitch_deg: 14.0, dist_scale: 1.0, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "d: monolito (ida)", caption: CAP_MONOLITH },
-        Keyframe { t: 29.0, yaw_deg: 175.0, pitch_deg: 16.0, dist_scale: 0.55, center: CenterTarget::Monolith, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "d: monolito (vuelta)", caption: CAP_MONOLITH },
-        // e) 31-38s: camara TOTALMENTE QUIETA (mismo yaw/pitch/dist/centro en
+        // d) 27-33s (6s): puente hacia el monolito -- d1 vuelo ancho desde
+        // el faro hasta encuadrar el puente entero (recien construido en la
+        // parte 1: tablero de piedra, postes con farol, viga y pasamanos de
+        // madera, arcos abajo), d2 (27-31s, 4s: LA toma corta del puente de
+        // cerca que pidio el usuario) volando pegado al tablero entre los
+        // postes, d3 llegada al monolito en si.
+        Keyframe { t: 27.0, yaw_deg: 15.0, pitch_deg: 12.0, dist_scale: 0.95, center: CenterTarget::Monolith, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "d1: puente (vuelo ancho)", caption: CAP_BRIDGE },
+        Keyframe { t: 31.0, yaw_deg: 20.0, pitch_deg: 8.0, dist_scale: 0.57, center: CenterTarget::Monolith, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "d2: puente (de cerca)", caption: CAP_BRIDGE },
+        Keyframe { t: 33.0, yaw_deg: 175.0, pitch_deg: 16.0, dist_scale: 0.55, center: CenterTarget::Monolith, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "d3: monolito", caption: CAP_MONOLITH },
+        // e) 33-42s: camara TOTALMENTE QUIETA (mismo yaw/pitch/dist/centro en
         // los 4 keyframes que siguen), solo cambia el blend de normal maps.
-        Keyframe { t: 31.0, yaw_deg: 200.0, pitch_deg: 10.0, dist_scale: 0.85, center: CenterTarget::Main, night: 0.0, normalmaps: 0.0, seed_offset: seed_a, segment: "e: nm off (quieto)", caption: CAP_NM_OFF },
-        Keyframe { t: 34.0, yaw_deg: 200.0, pitch_deg: 10.0, dist_scale: 0.85, center: CenterTarget::Main, night: 0.0, normalmaps: 0.0, seed_offset: seed_a, segment: "e: nm fundido (quieto)", caption: CAP_NM_FADE },
-        Keyframe { t: 35.0, yaw_deg: 200.0, pitch_deg: 10.0, dist_scale: 0.85, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "e: nm on (quieto)", caption: CAP_NM_ON },
-        // f) 38-44s (6s): noche, vista general (se aleja y cae la noche).
-        Keyframe { t: 38.0, yaw_deg: 200.0, pitch_deg: 10.0, dist_scale: 0.85, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "f: a noche general", caption: CAP_NIGHT },
-        // g) 44-54s (10s): Nether -- g1 acercandose (4s), g2 de cerca (6s).
+        Keyframe { t: 35.0, yaw_deg: 200.0, pitch_deg: 10.0, dist_scale: 0.85, center: CenterTarget::Main, night: 0.0, normalmaps: 0.0, seed_offset: seed_a, segment: "e: nm off (quieto)", caption: CAP_NM_OFF },
+        Keyframe { t: 38.0, yaw_deg: 200.0, pitch_deg: 10.0, dist_scale: 0.85, center: CenterTarget::Main, night: 0.0, normalmaps: 0.0, seed_offset: seed_a, segment: "e: nm fundido (quieto)", caption: CAP_NM_FADE },
+        Keyframe { t: 39.0, yaw_deg: 200.0, pitch_deg: 10.0, dist_scale: 0.85, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "e: nm on (quieto)", caption: CAP_NM_ON },
+        // f) 42-48s (6s): noche, vista general (se aleja y cae la noche).
+        Keyframe { t: 42.0, yaw_deg: 200.0, pitch_deg: 10.0, dist_scale: 0.85, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "f: a noche general", caption: CAP_NIGHT },
+        // g) 48-58s (10s): Nether -- g1 acercandose (4s), g2 de cerca (6s).
         // Nota sobre `dist_scale` de aca en adelante: se multiplica por el
         // radio de la isla PRINCIPAL (42), no por el de la isla que mira la
         // camara -- Nether (radio 15, a ~65 del centro principal) y End
@@ -150,19 +160,19 @@ pub fn timeline(seed_a: u32, seed_b: u32, seed_c: u32) -> Vec<Keyframe> {
         // camara metida dentro del terreno. Pitch ~32-35 con distancia
         // bastante mayor que el radio de esa isla le da altura y espacio de
         // sobra sin alejarse tanto como para perder el detalle.
-        Keyframe { t: 44.0, yaw_deg: 230.0, pitch_deg: 18.0, dist_scale: 6.0, center: CenterTarget::Main, night: 1.0, normalmaps: 1.0, seed_offset: seed_a, segment: "g1: hacia el nether", caption: CAP_NETHER },
-        Keyframe { t: 48.0, yaw_deg: 250.0, pitch_deg: 32.0, dist_scale: 1.0, center: CenterTarget::Nether, night: 1.0, normalmaps: 1.0, seed_offset: seed_a, segment: "g2: nether de cerca", caption: CAP_NETHER },
-        // h) 54-64s (10s): End -- h1 acercandose (4s), h2 de cerca (6s).
-        Keyframe { t: 54.0, yaw_deg: 290.0, pitch_deg: 32.0, dist_scale: 1.0, center: CenterTarget::Nether, night: 1.0, normalmaps: 1.0, seed_offset: seed_a, segment: "h1: hacia el end", caption: CAP_END },
-        Keyframe { t: 58.0, yaw_deg: 320.0, pitch_deg: 35.0, dist_scale: 1.1, center: CenterTarget::End, night: 1.0, normalmaps: 1.0, seed_offset: seed_a, segment: "h2: end de cerca", caption: CAP_END },
-        // i) 64-74s: regeneracion -- 5s con la semilla B, 5s con la semilla C
+        Keyframe { t: 48.0, yaw_deg: 230.0, pitch_deg: 18.0, dist_scale: 6.0, center: CenterTarget::Main, night: 1.0, normalmaps: 1.0, seed_offset: seed_a, segment: "g1: hacia el nether", caption: CAP_NETHER },
+        Keyframe { t: 52.0, yaw_deg: 250.0, pitch_deg: 32.0, dist_scale: 1.0, center: CenterTarget::Nether, night: 1.0, normalmaps: 1.0, seed_offset: seed_a, segment: "g2: nether de cerca", caption: CAP_NETHER },
+        // h) 58-68s (10s): End -- h1 acercandose (4s), h2 de cerca (6s).
+        Keyframe { t: 58.0, yaw_deg: 290.0, pitch_deg: 32.0, dist_scale: 1.0, center: CenterTarget::Nether, night: 1.0, normalmaps: 1.0, seed_offset: seed_a, segment: "h1: hacia el end", caption: CAP_END },
+        Keyframe { t: 62.0, yaw_deg: 320.0, pitch_deg: 35.0, dist_scale: 1.1, center: CenterTarget::End, night: 1.0, normalmaps: 1.0, seed_offset: seed_a, segment: "h2: end de cerca", caption: CAP_END },
+        // i) 68-78s: regeneracion -- 5s con la semilla B, 5s con la semilla C
         // (el corte de semilla es instantaneo, la camara sigue moviendose
         // parejo de la vista del End a la vista general de ambos lados del corte).
-        Keyframe { t: 64.0, yaw_deg: 350.0, pitch_deg: 35.0, dist_scale: 1.1, center: CenterTarget::End, night: 1.0, normalmaps: 1.0, seed_offset: seed_b, segment: "i1: semilla B", caption: CAP_SEED_B },
-        Keyframe { t: 69.0, yaw_deg: 380.0, pitch_deg: 28.0, dist_scale: 5.3, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "i2: semilla C", caption: CAP_SEED_C },
-        // j) 74-79s (5s): toma final alejandose.
-        Keyframe { t: 74.0, yaw_deg: 420.0, pitch_deg: 28.0, dist_scale: 5.7, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "j: final", caption: CAP_FINAL },
-        Keyframe { t: 79.0, yaw_deg: 450.0, pitch_deg: 30.0, dist_scale: 6.9, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "j: final", caption: CAP_FINAL },
+        Keyframe { t: 68.0, yaw_deg: 350.0, pitch_deg: 35.0, dist_scale: 1.1, center: CenterTarget::End, night: 1.0, normalmaps: 1.0, seed_offset: seed_b, segment: "i1: semilla B", caption: CAP_SEED_B },
+        Keyframe { t: 73.0, yaw_deg: 380.0, pitch_deg: 28.0, dist_scale: 5.3, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "i2: semilla C", caption: CAP_SEED_C },
+        // j) 78-83s (5s): toma final alejandose.
+        Keyframe { t: 78.0, yaw_deg: 420.0, pitch_deg: 28.0, dist_scale: 5.7, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "j: final", caption: CAP_FINAL },
+        Keyframe { t: 83.0, yaw_deg: 450.0, pitch_deg: 30.0, dist_scale: 6.9, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "j: final", caption: CAP_FINAL },
     ]
 }
 

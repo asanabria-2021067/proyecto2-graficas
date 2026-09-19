@@ -33,7 +33,7 @@ cargo run --release -- --record frames/ --width 1280 --height 720 --fps 30 --qua
   faltan), en formato `h:mm:ss`.
 - Reanudable: si un PNG ya existe lo saltea sin volver a renderizarlo (podes
   cortar con Ctrl+C y correr el mismo comando de nuevo).
-- Duracion total del guion: 79s. A 30fps son 2371 cuadros.
+- Duracion total del guion: 83s. A 30fps son 2491 cuadros.
 
 ## Juntar los cuadros en un video (ffmpeg)
 
@@ -45,19 +45,19 @@ ffmpeg -framerate 30 -i frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p -crf
 
 ### 720p para GitHub, menos de 10 MB (dos pasadas, PowerShell en Windows)
 
-Bitrate objetivo: ~900 kbps de video (sin audio) para 79s da
-`900 kbps * 79s / 8 ~= 8.9 MB`, con margen bajo el limite de 10 MB de
-GitHub (con el tramo del pueblo nuevo, 79s en vez de 73s, hay menos margen
-que antes -- de ahi bajar el bitrate de 1000k a 900k). Dos pasadas (mejor
+Bitrate objetivo: ~830 kbps de video (sin audio) para 83s da
+`830 kbps * 83s / 8 ~= 8.6 MB`, con margen bajo el limite de 10 MB de
+GitHub (con el tramo del puente nuevo, 83s en vez de 79s, hay menos margen
+que antes -- de ahi bajar el bitrate de 900k a 830k). Dos pasadas (mejor
 reparto de bits que una sola) con `-preset slow`. La primera pasada no
 necesita archivo de salida real -- en PowerShell/CMD el dispositivo nulo de
 Windows es `NUL` (no `/dev/null`):
 
 ```powershell
-ffmpeg -y -framerate 30 -i frames\frame_%05d.png -vf scale=1280:720 -c:v libx264 -preset slow -b:v 900k -pass 1 -an -f mp4 NUL
-ffmpeg -framerate 30 -i frames\frame_%05d.png -vf scale=1280:720 -c:v libx264 -preset slow -b:v 900k -pass 2 -an diorama_github.mp4
+ffmpeg -y -framerate 30 -i frames\frame_%05d.png -vf scale=1280:720 -c:v libx264 -preset slow -b:v 830k -pass 1 -an -f mp4 NUL
+ffmpeg -framerate 30 -i frames\frame_%05d.png -vf scale=1280:720 -c:v libx264 -preset slow -b:v 830k -pass 2 -an diorama_github.mp4
 ```
 
 (ffmpeg deja `ffmpeg2pass-0.log*` en el directorio actual, se puede borrar
 despues). Si el resultado se pasa un poco de 10 MB, bajar `-b:v` (por ejemplo
-a `850k`) y repetir las dos pasadas.
+a `750k`) y repetir las dos pasadas.

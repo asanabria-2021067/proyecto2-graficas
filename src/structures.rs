@@ -176,11 +176,11 @@ fn build_lake_and_waterfall(world: &mut World, hm: &Heightmap, cx: i32, cz: i32,
             // Fondo en forma de cuenco: mas hondo en el centro, se va
             // achicando hacia la orilla, para que el lago se lea como un
             // cuerpo de agua real y no un charco de un bloque. Profundidad
-            // maxima de 2 (antes 3): con mas de 2 bloques de agua encima la
-            // absorcion Beer-Lambert oscurecia el fondo entero incluso ya
-            // con el material mas claro, y la orilla quedaba angosta.
+            // maxima de 2 bloques de agua (antes 3): con el fondo de arena
+            // clara y la absorcion ya bajada (ver material.rs), 2 alcanza
+            // para leerse como cuenco sin oscurecer el centro.
             let dist_norm = (dist2 as f32).sqrt() / radius as f32;
-            let bowl_depth = ((1.0 - dist_norm) * 2.0) as i32;
+            let bowl_depth = ((1.0 - dist_norm) * 1.0) as i32;
             let bed_y = (water_level - 1 - bowl_depth).min(top);
             world.set(x, bed_y, z, block::SAND);
             world.fill_box((x, bed_y + 1, z), (x, water_level, z), block::WATER);

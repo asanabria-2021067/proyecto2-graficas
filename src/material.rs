@@ -213,8 +213,14 @@ pub fn build_material_table(seed: u32) -> MaterialTable {
     leaves.alpha_cutout = true;
     entries[block::LEAVES as usize] = Some(leaves);
 
+    // Absorcion bajada de (0.14,0.045,0.025): con el lago principal ya a 2
+    // bloques de profundidad maxima seguia oscureciendo demasiado el centro
+    // (el charco de la isla satelite, de 1 bloque, siempre se veia mucho
+    // mas claro). Con estos valores hasta 3 bloques de agua dejan pasar
+    // >80% del rojo y >90% del verde/azul: se nota el tinte celeste pero no
+    // tapa el fondo.
     let mut water = Material::uniform("water", seed, MatParams { specular_coef: 0.6, specular_exp: 90.0, transparency: 0.85, reflectivity: 0.30, ior: 1.33, emission: Vec3::zero() });
-    water.absorption = Vec3::new(0.14, 0.045, 0.025);
+    water.absorption = Vec3::new(0.055, 0.022, 0.012);
     entries[block::WATER as usize] = Some(water);
 
     let glass = Material::uniform("glass", seed, MatParams { specular_coef: 0.6, specular_exp: 120.0, transparency: 0.92, reflectivity: 0.06, ior: 1.5, emission: Vec3::zero() });

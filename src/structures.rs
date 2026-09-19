@@ -1006,7 +1006,7 @@ fn build_mini_end_islands(islands: &mut Vec<Island>, center_world: Vec3, main_ra
         let radius = rng.range_i32(3, 5);
         let cx_w = center_world.x + angle.cos() * dist;
         let cz_w = center_world.z + angle.sin() * dist;
-        let cy_w = center_world.y + rng.range_f32(-6.0, 8.0);
+        let cy_w = center_world.y + rng.range_f32(-4.0, 5.0);
         let half = radius + 2;
         let mut mini = World::new(half * 2 + 1, 6, half * 2 + 1);
         for dz in -radius..=radius {
@@ -1447,17 +1447,19 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     // redondeado (generate_soft_island). Union por un camino de bloques de
     // end_stone flotantes (no un puente solido).
     let end_r = 22.0f32;
-    let end_gap = 10.0;
+    let end_gap = 7.0;
     let end_angle = 160.0f32;
     let end_xz = (
         main_center_world.x + end_angle.to_radians().cos() * (r + end_gap + end_r),
         main_center_world.z + end_angle.to_radians().sin() * (r + end_gap + end_r),
     );
     let params_e = IslandParams::new(end_r, 0);
-    // Antes flotaba a +32 (32 bloques arriba del top_y de la isla principal);
-    // ahora solo un poco por encima, para que el recorrido de la camara y el
-    // puente se lean bien en vez de subir en vertical casi todo el tramo.
-    let offset_e = ((end_xz.0 as i32) - params_e.center_x, 9, (end_xz.1 as i32) - params_e.center_z);
+    // Antes flotaba a +32, despues a +9 (bloques arriba del top_y de la isla
+    // principal); todavia se notaba mas alta y mas lejos que las demas.
+    // Ahora +6: su superficie queda como maximo 6-8 bloques por encima de la
+    // principal (el ruido de altura de cada isla agrega +-3/+-6 propios, asi
+    // que columna a columna varia, pero el nivel base es ese).
+    let offset_e = ((end_xz.0 as i32) - params_e.center_x, 6, (end_xz.1 as i32) - params_e.center_z);
     let (end_world, end_hm) = generate_soft_island(seed.wrapping_add(404), &params_e);
     let end_idx = islands.len();
     islands.push(Island::new(end_world, offset_e));

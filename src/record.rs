@@ -120,12 +120,12 @@ const CAP_FINAL: &str = "DIORAMA PROCEDURAL COMPLETO";
 pub fn timeline(seed_a: u32, seed_b: u32, seed_c: u32) -> Vec<Keyframe> {
     vec![
         // a) 0-8s: vista general de dia, rotando.
-        Keyframe { t: 0.0, yaw_deg: 0.0, pitch_deg: 22.0, dist_scale: 6.5, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "a: general", caption: CAP_GENERAL },
+        Keyframe { t: 0.0, yaw_deg: 0.0, pitch_deg: 30.0, dist_scale: 5.3, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "a: general", caption: CAP_GENERAL },
         // a2) 8-14s (6s, NUEVO): recorrido del pueblo -- casas, parcelas,
         // pozo y caminos -- entre la vista general y el acercamiento al faro.
         Keyframe { t: 8.0, yaw_deg: 100.0, pitch_deg: 25.0, dist_scale: 0.9, center: CenterTarget::Village, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "a2: pueblo", caption: CAP_VILLAGE },
         // b) 14-21s (7s): zoom a la isla principal (faro/casita), llegando al lago.
-        Keyframe { t: 14.0, yaw_deg: 70.0, pitch_deg: 20.0, dist_scale: 6.5, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "b: principal", caption: CAP_MAIN },
+        Keyframe { t: 14.0, yaw_deg: 70.0, pitch_deg: 26.0, dist_scale: 5.3, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "b: principal", caption: CAP_MAIN },
         // c) 21-27s (6s): orbita lenta de cerca sobre el lago.
         Keyframe { t: 21.0, yaw_deg: 110.0, pitch_deg: 14.0, dist_scale: 1.0, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_a, segment: "c: lago", caption: CAP_LAKE },
         // d) 27-31s (4s): vuelo hasta el monolito y de vuelta hacia el faro.
@@ -159,10 +159,10 @@ pub fn timeline(seed_a: u32, seed_b: u32, seed_c: u32) -> Vec<Keyframe> {
         // (el corte de semilla es instantaneo, la camara sigue moviendose
         // parejo de la vista del End a la vista general de ambos lados del corte).
         Keyframe { t: 64.0, yaw_deg: 350.0, pitch_deg: 35.0, dist_scale: 1.1, center: CenterTarget::End, night: 1.0, normalmaps: 1.0, seed_offset: seed_b, segment: "i1: semilla B", caption: CAP_SEED_B },
-        Keyframe { t: 69.0, yaw_deg: 380.0, pitch_deg: 22.0, dist_scale: 6.5, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "i2: semilla C", caption: CAP_SEED_C },
+        Keyframe { t: 69.0, yaw_deg: 380.0, pitch_deg: 28.0, dist_scale: 5.3, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "i2: semilla C", caption: CAP_SEED_C },
         // j) 74-79s (5s): toma final alejandose.
-        Keyframe { t: 74.0, yaw_deg: 420.0, pitch_deg: 24.0, dist_scale: 7.0, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "j: final", caption: CAP_FINAL },
-        Keyframe { t: 79.0, yaw_deg: 450.0, pitch_deg: 26.0, dist_scale: 8.5, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "j: final", caption: CAP_FINAL },
+        Keyframe { t: 74.0, yaw_deg: 420.0, pitch_deg: 28.0, dist_scale: 5.7, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "j: final", caption: CAP_FINAL },
+        Keyframe { t: 79.0, yaw_deg: 450.0, pitch_deg: 30.0, dist_scale: 6.9, center: CenterTarget::Main, night: 0.0, normalmaps: 1.0, seed_offset: seed_c, segment: "j: final", caption: CAP_FINAL },
     ]
 }
 

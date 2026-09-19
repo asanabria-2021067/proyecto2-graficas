@@ -19,6 +19,10 @@ pub struct Args {
     /// tramo del guion de `--record` (misma semilla/fps que se le pasen), y
     /// al final reporta si detecto saltos de camara entre cuadros.
     pub dump_timeline: bool,
+    /// A que isla apunta la orbita en `--render`/`--bench` (main/nether/end/
+    /// monolith). Solo para verificar composicion desde la terminal sin
+    /// pasar por `--record`; el modo ventana sigue usando las teclas 4/5/6.
+    pub center: String,
 }
 
 impl Default for Args {
@@ -39,6 +43,7 @@ impl Default for Args {
             fps: 30,
             quality: 3,
             dump_timeline: false,
+            center: "main".to_string(),
         }
     }
 }
@@ -77,6 +82,7 @@ pub fn parse(raw: &[String]) -> Args {
             "--fps" => args.fps = next().parse().unwrap_or(args.fps),
             "--quality" => args.quality = parse_quality(&next(), args.quality),
             "--dump-timeline" => args.dump_timeline = true,
+            "--center" => args.center = next(),
             _ => {}
         }
         i += 1;

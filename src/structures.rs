@@ -438,6 +438,39 @@ fn build_lava_lake_and_falls(world: &mut World, hm: &Heightmap, cx: i32, cz: i32
             world.set(x, y, z, block::LAVA);
         }
     }
+
+    // Hilo colgante: por debajo de la cascada de 3 de ancho, el carril
+    // central sigue solo cayendo -- antes era una sola columna recta (se leia
+    // como una barra plana). Ahora el grosor varia entre 1 y 2 bloques y se
+    // bambolea un poco a los lados (jitter determinista por profundidad), como
+    // un hilo de lava real en vez de una linea rigida.
+    for depth in 22..40 {
+        let y = lava_level - depth;
+        if y < 1 {
+            break;
+        }
+        let h1 = hash_i32(edge_x, edge_z, depth * 7 + 1) % 3 - 1;
+        let h2 = hash_i32(edge_x, edge_z, depth * 7 + 2) % 3 - 1;
+        let wide = hash_i32(edge_x, edge_z, depth * 7 + 3) % 4 == 0;
+        let cx = edge_x + (perp_x * h1 as f32).round() as i32;
+        let cz = edge_z + (perp_z * h1 as f32).round() as i32;
+        world.set(cx, y, cz, block::LAVA);
+        if wide {
+            let ex = cx + (perp_x * h2 as f32).round() as i32 + (dx * 0.4).round() as i32;
+            let ez = cz + (perp_z * h2 as f32).round() as i32 + (dz * 0.4).round() as i32;
+            world.set(ex, y, ez, block::LAVA);
+        }
+    }
+}
+
+/// Hash entero determinista chico (no correlacionado con el ruido Perlin de
+/// la isla) para jitter reproducible por columna/profundidad, sin necesitar
+/// pasar un `Pcg32` mutable a traves de toda la cadena de llamadas.
+#[inline]
+fn hash_i32(x: i32, z: i32, salt: i32) -> i32 {
+    let h = (x as u32).wrapping_mul(374_761_393) ^ (z as u32).wrapping_mul(668_265_263) ^ (salt as u32).wrapping_mul(2_246_822_519);
+    let h = h ^ (h >> 15);
+    (h % 1_000_000) as i32
 }
 
 /// Portal del Nether: marco de obsidiana de 4 de ancho x 5 de alto con
@@ -795,10 +828,6 @@ fn build_mini_end_islands(islands: &mut Vec<Island>, center_world: Vec3, main_ra
     }
 }
 
-/// Como `build_bridge`, pero para el camino "flotante" hacia el End: en vez
-/// de una pasarela continua con baranda, son bloques de end_stone salteados
-/// (huecos entre medio) a una altura que varia un poco de a uno, como
-/// piedras flotantes sueltas en vez de un puente solido.
 /// Parametros de un estilo de puente: que materiales usa y si el tablero
 /// sube en el medio (arco, puentes "de piedra") o cuelga (catenaria,
 /// puentes colgantes).
@@ -1119,7 +1148,7 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     // Isla del Nether: a un costado y mas abajo que la principal (offset.y
     // negativo), perfil de ruido "ridged" (generate_rugged_island) en vez
     // del fBm suave de las demas. Union por un puente de nether_bricks.
-    let nether_r = 11.0f32;
+    let nether_r = 15.0f32;
     let nether_gap = 8.0;
     let nether_angle = 320.0f32;
     let nether_xz = (
@@ -1137,24 +1166,24 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     let nseed = seed.wrapping_add(303);
     let lava_level = nether.params.top_y - 5;
 
-    let (plx, plz) = polar(ncx, ncz, 200.0, nr * 0.4);
+    let (plx, plz) = polar(ncx, ncz, 195.0, nr * 0.42);
     build_nether_portal(&mut islands[nether.index].world, &nether.heightmap, plx, plz);
 
-    let (llx, llz) = polar(ncx, ncz, 320.0, nr * 0.25);
-    build_lava_lake_and_falls(&mut islands[nether.index].world, &nether.heightmap, llx, llz, (nr * 0.3) as i32, lava_level, 320.0);
+    let (llx, llz) = polar(ncx, ncz, 330.0, nr * 0.3);
+    build_lava_lake_and_falls(&mut islands[nether.index].world, &nether.heightmap, llx, llz, (nr * 0.28) as i32, lava_level, 330.0);
 
     // Arbol hongo carmesi grande, con nylium carmesi debajo.
-    let (ctx, ctz) = polar(ncx, ncz, 30.0, nr * 0.35);
+    let (ctx, ctz) = polar(ncx, ncz, 20.0, nr * 0.4);
     build_nylium_patch(&mut islands[nether.index].world, &nether.heightmap, ctx, ctz, 3, block::CRIMSON_NYLIUM);
     build_fungus_tree(&mut islands[nether.index].world, &nether.heightmap, ctx, ctz, block::CRIMSON_STEM, block::NETHER_WART_BLOCK, block::SHROOMLIGHT, 9, nseed);
 
     // Arbol hongo distorsionado grande, con nylium turquesa debajo.
-    let (wtx, wtz) = polar(ncx, ncz, 150.0, nr * 0.35);
+    let (wtx, wtz) = polar(ncx, ncz, 160.0, nr * 0.4);
     build_nylium_patch(&mut islands[nether.index].world, &nether.heightmap, wtx, wtz, 3, block::WARPED_NYLIUM);
     build_fungus_tree(&mut islands[nether.index].world, &nether.heightmap, wtx, wtz, block::WARPED_STEM, block::WARPED_WART_BLOCK, block::SHROOMLIGHT, 8, nseed.wrapping_add(7));
 
     // Formacion de blackstone/basalto con fuente de lava y charco al pie.
-    let (bfx, bfz) = polar(ncx, ncz, 260.0, nr * 0.35);
+    let (bfx, bfz) = polar(ncx, ncz, 255.0, nr * 0.4);
     build_blackstone_formation(&mut islands[nether.index].world, &nether.heightmap, bfx, bfz, nseed);
 
     // Fuegos naranjas dispersos y un parche de soul_sand con fuego de alma.
@@ -1175,15 +1204,18 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
     // (offset.y positivo, mayor separacion), perfil de ruido suave y
     // redondeado (generate_soft_island). Union por un camino de bloques de
     // end_stone flotantes (no un puente solido).
-    let end_r = 16.0f32;
-    let end_gap = 16.0;
+    let end_r = 22.0f32;
+    let end_gap = 10.0;
     let end_angle = 160.0f32;
     let end_xz = (
         main_center_world.x + end_angle.to_radians().cos() * (r + end_gap + end_r),
         main_center_world.z + end_angle.to_radians().sin() * (r + end_gap + end_r),
     );
     let params_e = IslandParams::new(end_r, 0);
-    let offset_e = ((end_xz.0 as i32) - params_e.center_x, 32, (end_xz.1 as i32) - params_e.center_z);
+    // Antes flotaba a +32 (32 bloques arriba del top_y de la isla principal);
+    // ahora solo un poco por encima, para que el recorrido de la camara y el
+    // puente se lean bien en vez de subir en vertical casi todo el tramo.
+    let offset_e = ((end_xz.0 as i32) - params_e.center_x, 9, (end_xz.1 as i32) - params_e.center_z);
     let (end_world, end_hm) = generate_soft_island(seed.wrapping_add(404), &params_e);
     let end_idx = islands.len();
     islands.push(Island::new(end_world, offset_e));
@@ -1198,21 +1230,26 @@ pub fn build_lighthouse_scene(seed: u32) -> SceneIslands {
 
     // Ciudad de torres: torre central delgada, dos torres secundarias con
     // pisos apilados unidas por escaleras diagonales.
-    let (t1x, t1z) = polar(ecx, ecz, 40.0, er * 0.42);
-    let (t2x, t2z) = polar(ecx, ecz, 190.0, er * 0.42);
+    // Torres separadas 180 grados (antes 150) y un poco mas lejos del centro:
+    // con la isla mas grande hay lugar de sobra y asi no se pisan con los
+    // bosques de chorus que van mas al borde.
+    let (t1x, t1z) = polar(ecx, ecz, 30.0, er * 0.38);
+    let (t2x, t2z) = polar(ecx, ecz, 210.0, er * 0.38);
     let central_base_y = build_central_tower(&mut islands[end_island.index].world, &end_island.heightmap, ecx, ecz, 18);
     let tower1_base_y = build_city_tower(&mut islands[end_island.index].world, &end_island.heightmap, t1x, t1z, 2, false);
     let tower2_base_y = build_city_tower(&mut islands[end_island.index].world, &end_island.heightmap, t2x, t2z, 3, true);
     build_diagonal_stair(&mut islands[end_island.index].world, ecx, ecz, central_base_y + 2, t1x, t1z, tower1_base_y + 1);
     build_diagonal_stair(&mut islands[end_island.index].world, ecx, ecz, central_base_y + 2, t2x, t2z, tower2_base_y + 1);
 
-    // Barco chico de purpur flotando cerca de la ciudad.
-    let (shx, shz) = polar(ecx, ecz, 300.0, er * 0.55);
+    // Barco chico de purpur flotando cerca de la ciudad, lejos de las torres
+    // y de los bosques de chorus.
+    let (shx, shz) = polar(ecx, ecz, 120.0, er * 0.6);
     build_purpur_ship(&mut islands[end_island.index].world, &end_island.heightmap, shx, shz);
 
-    // Bosquecitos de chorus alrededor de la ciudad.
-    for angle in [80.0, 140.0, 250.0] {
-        let (chx, chz) = polar(ecx, ecz, angle, er * 0.65);
+    // Bosquecitos de chorus alrededor de la ciudad, mas hacia el borde y
+    // repartidos lejos de las torres/barco.
+    for angle in [280.0, 330.0, 60.0] {
+        let (chx, chz) = polar(ecx, ecz, angle, er * 0.72);
         build_chorus_grove(&mut islands[end_island.index].world, &end_island.heightmap, chx, chz, 6, eseed ^ (angle as u32));
     }
 

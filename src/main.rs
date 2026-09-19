@@ -67,7 +67,13 @@ fn build_world_data(seed: u32) -> WorldData {
 /// la vez; la minima sigue centrada en la principal para poder acercarse a
 /// ver el detalle.
 fn build_camera(args: &Args, wd: &WorldData) -> Camera {
-    Camera::new(wd.main_center, args.yaw, args.pitch, args.dist, wd.main_radius * 0.6, wd.main_radius * 9.0, 50.0)
+    let center = match args.center.as_str() {
+        "nether" => wd.nether_center,
+        "end" => wd.end_center,
+        "monolith" => wd.monolith_center,
+        _ => wd.main_center,
+    };
+    Camera::new(center, args.yaw, args.pitch, args.dist, wd.main_radius * 0.6, wd.main_radius * 9.0, 50.0)
 }
 
 fn environment_for(night: bool) -> Environment {
